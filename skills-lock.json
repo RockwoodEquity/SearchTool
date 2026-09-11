@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "build-with-exa": {
+      "source": "exa-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/build-with-exa/SKILL.md",
+      "computedHash": "8611b58d4565cce80d65089a2da23d38428943bbd405cc920e6d533a62e3b88e"
+    },
+    "supabase": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase/SKILL.md",
+      "computedHash": "a6260582f48df8ba53380bb9b9e870ed2ae5fe147799e90ed783b8aa25167d50"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
+      "computedHash": "128fac78002d916c8ca908245d398e634f540d8bcf20915b2b2359aeb18eba59"
+    }
+  }
+}
