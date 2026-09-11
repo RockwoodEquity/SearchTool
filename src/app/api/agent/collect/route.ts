@@ -35,6 +35,32 @@ function nullIfEmpty(v: string | undefined | null): string | null {
   return v && v.trim().length > 0 ? v.trim() : null;
 }
 
+interface GroundingCitation {
+  url: string;
+  title?: string | null;
+}
+
+interface GroundingEntry {
+  field: string;
+  citations: GroundingCitation[];
+}
+
+/** Best source URL for a given company index — the page(s) the agent actually cited. */
+function sourceUrlForIndex(
+  grounding: GroundingEntry[] | null | undefined,
+  index: number,
+  fieldNames: string[]
+): string | null {
+  if (!grounding) return null;
+  for (const field of fieldNames) {
+    const path = `structured.companies[${index}].${field}`;
+    const entry = grounding.find((g) => g.field === path);
+    const url = entry?.citations?.[0]?.url;
+    if (url) return url;
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const { runId, mode, sectorKey } = (await req.json()) as {
     runId: string;
@@ -60,8 +86,9 @@ export async function POST(req: NextRequest) {
     const categoryLabel = sectorLabel(sectorKey);
     const structured = run.output?.structured as { companies?: unknown[] } | undefined;
     const companies = Array.isArray(structured?.companies) ? structured!.companies : [];
+    const grounding = (run.output?.grounding ?? null) as GroundingEntry[] | null;
 
-    const rows: CompanyInsert[] = companies.map((raw) => {
+    const rows: CompanyInsert[] = companies.map((raw, index) => {
       if (mode === "for_sale") {
         const c = raw as ForSaleCompany;
         const rawDate = nullIfEmpty(c.listing_date);
@@ -73,12 +100,17 @@ export async function POST(req: NextRequest) {
           .filter(Boolean)
           .join(" | ") || null;
 
+        const sourceUrl =
+          nullIfEmpty(c.listing_url) ??
+          sourceUrlForIndex(grounding, index, ["listing_url", "website", "company_name"]) ??
+          nullIfEmpty(c.website);
+
         return {
           mode,
           category: categoryLabel,
           company: c.company_name,
           website: nullIfEmpty(c.website),
-          link_to_listing: nullIfEmpty(c.listing_url) ?? nullIfEmpty(c.website),
+          link_to_listing: sourceUrl,
           location: nullIfEmpty(c.location),
           employees: nullIfEmpty(c.employees),
           revenue_or_price: revenueOrPrice,
@@ -91,12 +123,16 @@ export async function POST(req: NextRequest) {
       }
 
       const c = raw as ProprietaryCompany;
+      const sourceUrl =
+        sourceUrlForIndex(grounding, index, ["company_name", "website", "why_it_fits"]) ??
+        nullIfEmpty(c.website);
+
       return {
         mode,
         category: categoryLabel,
         company: c.company_name,
         website: nullIfEmpty(c.website),
-        link_to_listing: null,
+        link_to_listing: sourceUrl,
         location: nullIfEmpty(c.location),
         employees: nullIfEmpty(c.employees),
         revenue_or_price: nullIfEmpty(c.estimated_revenue),
@@ -108,9 +144,9 @@ export async function POST(req: NextRequest) {
       } satisfies CompanyInsert;
     });
 
-    await insertCompanies(rows);
+    const inserted = await insertCompanies(rows);
 
-    return NextResponse.json({ inserted: rows.length });
+    return NextResponse.json({ inserted, skipped: rows.length - inserted });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to collect agent run results" },

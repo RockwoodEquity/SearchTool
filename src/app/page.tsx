@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { SECTOR_ORDER, type Mode } from "@/lib/sectors";
 import styles from "./page.module.css";
 
@@ -37,10 +37,65 @@ interface CompanyRow {
   date_found: string;
 }
 
-const MODE_LABEL: Record<Mode, string> = {
-  for_sale: "For-Sale Listing",
-  proprietary: "Proprietary Target",
+interface ColumnDef {
+  header: string;
+  render: (row: CompanyRow) => ReactNode;
+  className?: string;
+}
+
+const SITE_LINK: ColumnDef = {
+  header: "Website",
+  render: (row) =>
+    row.website ? (
+      <a href={row.website} target="_blank" rel="noopener noreferrer">
+        site
+      </a>
+    ) : null,
 };
+
+const SOURCE_LINK: ColumnDef = {
+  header: "Source URL",
+  render: (row) =>
+    row.link_to_listing ? (
+      <a href={row.link_to_listing} target="_blank" rel="noopener noreferrer">
+        source
+      </a>
+    ) : null,
+};
+
+const DATE_FOUND: ColumnDef = {
+  header: "Date Sourced",
+  render: (row) => new Date(row.date_found).toLocaleDateString(),
+};
+
+const FOR_SALE_COLUMNS: ColumnDef[] = [
+  { header: "Category", render: (r) => r.category },
+  { header: "Company", render: (r) => r.company },
+  SITE_LINK,
+  SOURCE_LINK,
+  { header: "Location", render: (r) => r.location },
+  { header: "Employees", render: (r) => r.employees },
+  { header: "Asking Price / Revenue", render: (r) => r.revenue_or_price },
+  { header: "Why it fits", render: (r) => r.why_fits, className: "whyCell" },
+  { header: "Broker/Source", render: (r) => r.broker_source },
+  { header: "Listing Date", render: (r) => r.listing_date },
+  DATE_FOUND,
+];
+
+const PROPRIETARY_COLUMNS: ColumnDef[] = [
+  { header: "Category", render: (r) => r.category },
+  { header: "Company", render: (r) => r.company },
+  SITE_LINK,
+  SOURCE_LINK,
+  { header: "Location", render: (r) => r.location },
+  { header: "Employees", render: (r) => r.employees },
+  { header: "Est. Revenue", render: (r) => r.revenue_or_price },
+  { header: "Currently For Sale?", render: (r) => r.broker_source },
+  { header: "Contact", render: (r) => r.contact },
+  { header: "Already PE-owned?", render: (r) => r.pe_owned },
+  { header: "Why it fits", render: (r) => r.why_fits, className: "whyCell" },
+  DATE_FOUND,
+];
 
 function initialStatuses(): Record<Mode, Record<string, CategoryStatus>> {
   const make = () =>
@@ -61,9 +116,49 @@ async function pollRunUntilDone(runId: string): Promise<void> {
   }
 }
 
+function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRow[]; columns: ColumnDef[] }) {
+  return (
+    <div className={styles.tableBlock}>
+      <h2 className={styles.tableTitle}>
+        {title} <span className={styles.rowCount}>({rows.length})</span>
+      </h2>
+      <div className={styles.tableWrap}>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              {columns.map((c) => (
+                <th key={c.header}>{c.header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                {columns.map((c) => (
+                  <td key={c.header} className={c.className ? styles[c.className] : undefined}>
+                    {c.render(row)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={columns.length} className={styles.emptyRow}>
+                  No results yet. Run a search above.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [statuses, setStatuses] = useState(initialStatuses());
   const [runningMode, setRunningMode] = useState<Mode | null>(null);
+  const [resetting, setResetting] = useState(false);
   const [rows, setRows] = useState<CompanyRow[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [startDate, setStartDate] = useState("");
@@ -137,6 +232,21 @@ export default function Home() {
     setRunningMode(null);
   };
 
+  const resetAll = async () => {
+    if (!window.confirm("Delete all saved results? This cannot be undone.")) return;
+    setResetting(true);
+    try {
+      const res = await fetch("/api/companies", { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Reset failed");
+      setStatuses(initialStatuses());
+      await fetchRows();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const exportHref = useMemo(() => {
     const params = new URLSearchParams();
     if (startDate) params.set("start", startDate);
@@ -144,6 +254,9 @@ export default function Home() {
     const qs = params.toString();
     return `/api/export${qs ? `?${qs}` : ""}`;
   }, [startDate, endDate]);
+
+  const forSaleRows = rows.filter((r) => r.mode === "for_sale");
+  const proprietaryRows = rows.filter((r) => r.mode === "proprietary");
 
   return (
     <div className={styles.page}>
@@ -224,70 +337,14 @@ export default function Home() {
         <a className={styles.exportButton} href={exportHref}>
           Download Excel
         </a>
-        <span className={styles.rowCount}>{rows.length} rows</span>
+        <button className={styles.resetButton} onClick={resetAll} disabled={resetting}>
+          {resetting ? "Resetting…" : "Reset All Results"}
+        </button>
+        <span className={styles.rowCount}>{rows.length} total rows</span>
       </section>
 
-      <section className={styles.tableWrap}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Mode</th>
-              <th>Category</th>
-              <th>Company</th>
-              <th>Website</th>
-              <th>Link to Listing</th>
-              <th>Location</th>
-              <th>Employees</th>
-              <th>Est. Revenue / Asking Price</th>
-              <th>Why it fits</th>
-              <th>Broker/Source</th>
-              <th>Listing Date</th>
-              <th>Date Found</th>
-              <th>Contact</th>
-              <th>Already PE-owned?</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{MODE_LABEL[row.mode]}</td>
-                <td>{row.category}</td>
-                <td>{row.company}</td>
-                <td>
-                  {row.website ? (
-                    <a href={row.website} target="_blank" rel="noopener noreferrer">
-                      site
-                    </a>
-                  ) : null}
-                </td>
-                <td>
-                  {row.link_to_listing ? (
-                    <a href={row.link_to_listing} target="_blank" rel="noopener noreferrer">
-                      listing
-                    </a>
-                  ) : null}
-                </td>
-                <td>{row.location}</td>
-                <td>{row.employees}</td>
-                <td>{row.revenue_or_price}</td>
-                <td className={styles.whyCell}>{row.why_fits}</td>
-                <td>{row.broker_source}</td>
-                <td>{row.listing_date}</td>
-                <td>{new Date(row.date_found).toLocaleString()}</td>
-                <td>{row.contact}</td>
-                <td>{row.mode === "proprietary" ? row.pe_owned : ""}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={14} className={styles.emptyRow}>
-                  No results yet. Run a search above.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </section>
+      <ResultsTable title="For-Sale Listings" rows={forSaleRows} columns={FOR_SALE_COLUMNS} />
+      <ResultsTable title="Proprietary Targets" rows={proprietaryRows} columns={PROPRIETARY_COLUMNS} />
     </div>
   );
 }

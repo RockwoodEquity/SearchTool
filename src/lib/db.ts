@@ -78,12 +78,29 @@ export async function ensureSchema() {
   initialized = true;
 }
 
-export async function insertCompanies(rows: CompanyInsert[]) {
-  if (rows.length === 0) return;
+/**
+ * Dedupe key is intentionally just identity (mode + company name, or mode + website) —
+ * not enrichment fields like pe_owned, which can vary run to run for the same company.
+ */
+export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
+  if (rows.length === 0) return 0;
   await ensureSchema();
   const client = await getPool().connect();
+  let inserted = 0;
   try {
     for (const row of rows) {
+      const dup = await client.query(
+        `SELECT 1 FROM companies
+         WHERE mode = $1
+           AND (
+             lower(trim(company)) = lower(trim($2))
+             OR ($3::text IS NOT NULL AND lower(trim(website)) = lower(trim($3)))
+           )
+         LIMIT 1`,
+        [row.mode, row.company, row.website]
+      );
+      if ((dup.rowCount ?? 0) > 0) continue;
+
       await client.query(
         `INSERT INTO companies (
           mode, category, company, website, link_to_listing, location,
@@ -106,10 +123,17 @@ export async function insertCompanies(rows: CompanyInsert[]) {
           row.pe_owned,
         ]
       );
+      inserted++;
     }
   } finally {
     client.release();
   }
+  return inserted;
+}
+
+export async function deleteAllCompanies(): Promise<void> {
+  await ensureSchema();
+  await getPool().query(`DELETE FROM companies`);
 }
 
 export async function queryCompanies(start?: string, end?: string): Promise<CompanyRow[]> {

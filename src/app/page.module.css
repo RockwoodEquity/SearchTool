@@ -125,10 +125,39 @@
   align-self: flex-end;
 }
 
+.resetButton {
+  padding: 8px 14px;
+  border: 1px solid #c0392b;
+  border-radius: 6px;
+  background: #fff;
+  color: #c0392b;
+  cursor: pointer;
+  align-self: flex-end;
+}
+
+.resetButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .rowCount {
   color: #666;
   font-size: 0.85rem;
   margin-left: auto;
+}
+
+.tableBlock {
+  margin-bottom: 28px;
+}
+
+.tableTitle {
+  font-size: 1.1rem;
+  margin: 0 0 10px;
+}
+
+.tableTitle .rowCount {
+  margin-left: 0;
+  font-weight: 400;
 }
 
 .tableWrap {

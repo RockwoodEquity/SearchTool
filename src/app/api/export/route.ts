@@ -9,7 +9,7 @@ const COLUMNS: { header: string; key: string; width?: number }[] = [
   { header: "Category", key: "category" },
   { header: "Company", key: "company" },
   { header: "Website", key: "website" },
-  { header: "Link to Listing", key: "link_to_listing" },
+  { header: "Source URL", key: "link_to_listing" },
   { header: "Location", key: "location" },
   { header: "Employees", key: "employees" },
   { header: "Est. Revenue / Asking Price", key: "revenue_or_price" },
