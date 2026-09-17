@@ -43,3 +43,6 @@ next-env.d.ts
 # local agent tooling (not part of the app)
 .agents/
 .claude/
+
+.vercel
+.env*
