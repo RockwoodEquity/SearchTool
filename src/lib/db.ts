@@ -1,8 +1,9 @@
 import { Pool } from "pg";
-import type { Mode } from "./sectors";
+import type { Mode, SearchType } from "./sectors";
 
 export interface CompanyRow {
   id: number;
+  search_type: SearchType;
   mode: Mode;
   category: string;
   company: string;
@@ -21,6 +22,7 @@ export interface CompanyRow {
 }
 
 export interface CompanyInsert {
+  search_type: SearchType;
   mode: Mode;
   category: string;
   company: string;
@@ -78,6 +80,7 @@ export async function ensureSchema() {
     )
   `);
   await getPool().query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS search_filters TEXT`);
+  await getPool().query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS search_type TEXT NOT NULL DEFAULT 'addon'`);
   initialized = true;
 }
 
@@ -94,13 +97,14 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
     for (const row of rows) {
       const dup = await client.query(
         `SELECT 1 FROM companies
-         WHERE mode = $1
+         WHERE search_type = $4
+           AND mode = $1
            AND (
              lower(trim(company)) = lower(trim($2))
              OR ($3::text IS NOT NULL AND lower(trim(website)) = lower(trim($3)))
            )
          LIMIT 1`,
-        [row.mode, row.company, row.website]
+        [row.mode, row.company, row.website, row.search_type]
       );
       if ((dup.rowCount ?? 0) > 0) continue;
 
@@ -108,8 +112,8 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
         `INSERT INTO companies (
           mode, category, company, website, link_to_listing, location,
           employees, revenue_or_price, why_fits, broker_source, listing_date,
-          contact, pe_owned, search_filters
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          contact, pe_owned, search_filters, search_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           row.mode,
           row.category,
@@ -125,6 +129,7 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
           row.contact,
           row.pe_owned,
           row.search_filters,
+          row.search_type,
         ]
       );
       inserted++;
@@ -135,16 +140,21 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
   return inserted;
 }
 
-export async function deleteAllCompanies(): Promise<void> {
+/** Deletes only the given search type's rows, so resetting one tab never touches the other. */
+export async function deleteCompaniesOfType(searchType: SearchType): Promise<void> {
   await ensureSchema();
-  await getPool().query(`DELETE FROM companies`);
+  await getPool().query(`DELETE FROM companies WHERE search_type = $1`, [searchType]);
 }
 
-export async function queryCompanies(start?: string, end?: string): Promise<CompanyRow[]> {
+export async function queryCompanies(
+  searchType: SearchType,
+  start?: string,
+  end?: string
+): Promise<CompanyRow[]> {
   await ensureSchema();
 
-  const conditions: string[] = [];
-  const params: string[] = [];
+  const conditions: string[] = [`search_type = $1`];
+  const params: string[] = [searchType];
 
   if (start) {
     params.push(start);

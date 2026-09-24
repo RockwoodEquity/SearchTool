@@ -63,6 +63,61 @@ const BASE_SECTORS: Record<string, BaseSector> = {
   },
 };
 
+export type SearchType = "addon" | "platform";
+
+const PLATFORM_GEOGRAPHY = "Headquartered in the US or Canada (North America)";
+const PLATFORM_OWNERSHIP =
+  "Independently owned: founder-owned, family-owned, or a corporate carve-out — not already backed by private equity or part of a larger group";
+
+// Platform search is intentionally broader than add-ons: geography + sector focus only.
+// Financial cutoffs are supplied by the user at search time, never hard-coded here.
+Object.assign(BASE_SECTORS, {
+  platform_industrials: {
+    label: "Industrials",
+    description:
+      "Industrial businesses: value-added manufacturers of engineered products, components and equipment, industrial distributors, and specialty industrial services or technology businesses.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Differentiated products or services serving industrial and commercial customers"],
+  },
+  platform_specialized_b2b: {
+    label: "Specialized B2B",
+    description:
+      "Specialized business-to-business companies: outsourced business services, testing and inspection, facility and maintenance services, and value-added distribution serving commercial and industrial customers with recurring or repeat revenue.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Recurring or repeat customer relationships rather than one-off work"],
+  },
+  platform_regulated: {
+    label: "Regulated Industries",
+    description:
+      "Businesses whose demand is driven by regulation and compliance: inspection, testing, certification, safety and compliance services, and licensed or regulated product and service providers.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Revenue supported by regulatory, licensing or compliance requirements"],
+  },
+  platform_aerospace_defense: {
+    label: "Aerospace & Defense",
+    description:
+      "Aerospace and defense suppliers: manufacturers of components, assemblies and systems, precision machining and fabrication, and MRO or support services for aerospace, defense and government customers.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Serves aerospace, defense or government end markets"],
+  },
+  platform_environmental: {
+    label: "Environmental",
+    description:
+      "Environmental businesses: water and wastewater products and services, waste and recycling services, remediation, environmental testing, consulting and compliance, and related equipment.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Serves environmental, water, waste or resource-management needs"],
+  },
+  platform_healthcare: {
+    label: "Healthcare",
+    description:
+      "Healthcare businesses: medical and assistive product manufacturers, healthcare products distribution, medical device outsourcing and contract services, and non-clinical healthcare services.",
+    criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Serves healthcare, medical or patient-care end markets"],
+  },
+});
+
+const PLATFORM_EXCLUSIONS: string[] = [
+  "",
+  "STRICT EXCLUSIONS for this search:",
+  "- Exclude contractors: companies whose revenue comes mainly from bid-based, project-by-project construction, installation or trade contracting work (general contractors, subcontractors, and similar).",
+  "- Exclude businesses with heavy commodity risk: companies whose main output is a raw material or commodity, or whose margins swing with commodity input prices (for example metals, resin, lumber, aggregates, fuel, oil and gas, agricultural commodities).",
+  "Prefer differentiated products or services, repeat or recurring revenue, and diversified customers.",
+];
+
 export const SECTOR_ORDER = [
   "environmental_services",
   "facility_services",
@@ -70,6 +125,23 @@ export const SECTOR_ORDER = [
   "manufacturing",
   "b2b_services",
 ] as const;
+
+export const PLATFORM_SECTOR_ORDER = [
+  "platform_industrials",
+  "platform_specialized_b2b",
+  "platform_regulated",
+  "platform_aerospace_defense",
+  "platform_environmental",
+  "platform_healthcare",
+] as const;
+
+export function isSearchType(v: unknown): v is SearchType {
+  return v === "addon" || v === "platform";
+}
+
+export function sectorsFor(searchType: SearchType): readonly string[] {
+  return searchType === "platform" ? PLATFORM_SECTOR_ORDER : SECTOR_ORDER;
+}
 
 export function sectorLabel(key: string): string {
   return BASE_SECTORS[key]?.label ?? key;
@@ -148,12 +220,17 @@ function financialRequirementBlock(filters: SearchFilters): string[] {
 }
 
 export function buildAgentRunSpec(
+  searchType: SearchType,
   mode: Mode,
   sectorKey: string,
   filters: SearchFilters = {}
 ): AgentRunSpec {
   const base = BASE_SECTORS[sectorKey];
   if (!base) throw new Error(`Unknown sector: ${sectorKey}`);
+  if (!sectorsFor(searchType).includes(sectorKey)) {
+    throw new Error(`Sector ${sectorKey} does not belong to ${searchType} search`);
+  }
+  const typeBlock = searchType === "platform" ? PLATFORM_EXCLUSIONS : [];
   const financialBlock = financialRequirementBlock(filters);
 
   if (mode === "for_sale") {
@@ -163,6 +240,7 @@ export function buildAgentRunSpec(
       "",
       "A result only counts if it is actively marketed for sale right now — listed on a business-for-sale marketplace (e.g. BizBuySell, Axial, a broker's site) or similar — not merely a company website with no for-sale listing. Also require:",
       criteriaBlock(base.criteria),
+      ...typeBlock,
       ...financialBlock,
       "",
       "Return each distinct business only once. For each, include the direct link to the for-sale listing itself (not just the company's own website) whenever one exists.",
@@ -212,6 +290,7 @@ export function buildAgentRunSpec(
     "",
     "Require:",
     criteriaBlock(base.criteria),
+    ...typeBlock,
     ...financialBlock,
     "",
     "These are proprietary acquisition targets, not businesses currently marketed for sale — do not limit results to for-sale listings. Return each distinct company only once.",

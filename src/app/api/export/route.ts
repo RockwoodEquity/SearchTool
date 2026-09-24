@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { queryCompanies } from "@/lib/db";
+import { isSearchType } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 
@@ -28,14 +29,19 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
+  const type = req.nextUrl.searchParams.get("type") ?? "addon";
   const start = req.nextUrl.searchParams.get("start") || undefined;
   const end = req.nextUrl.searchParams.get("end") || undefined;
 
+  if (!isSearchType(type)) {
+    return NextResponse.json({ error: "Invalid type" }, { status: 400 });
+  }
+
   try {
-    const rows = await queryCompanies(start, end);
+    const rows = await queryCompanies(type, start, end);
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Add-On Search Results");
+    const sheet = workbook.addWorksheet(type === "platform" ? "Platform Search Results" : "Add-On Search Results");
 
     sheet.columns = COLUMNS.map((c) => ({ header: c.header, key: c.key }));
 
@@ -82,7 +88,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="rockwood-addon-search.xlsx"`,
+        "Content-Disposition": `attachment; filename="rockwood-${type}-search.xlsx"`,
       },
     });
   } catch (err) {

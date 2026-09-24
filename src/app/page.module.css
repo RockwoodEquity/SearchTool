@@ -13,6 +13,44 @@
   margin: 0 0 20px;
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid #ddd;
+  margin-bottom: 12px;
+}
+
+.tab,
+.tabActive {
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  background: none;
+  color: #666;
+  cursor: pointer;
+}
+
+.tabActive {
+  color: #1a1a2e;
+  border-bottom-color: #1a1a2e;
+}
+
+.tabBlurb {
+  margin: 0 0 16px;
+  font-size: 0.85rem;
+  color: #555;
+  max-width: 900px;
+}
+
+.filterHint {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  color: #666;
+}
+
 .searchFilters {
   display: flex;
   align-items: flex-end;

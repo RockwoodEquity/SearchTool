@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
 import { insertCompanies, type CompanyInsert } from "@/lib/db";
-import { formatFilterLabel, sanitizeFilters, sectorLabel, type Mode } from "@/lib/sectors";
+import { formatFilterLabel, isSearchType, sanitizeFilters, sectorLabel, type Mode } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -62,15 +62,16 @@ function sourceUrlForIndex(
 }
 
 export async function POST(req: NextRequest) {
-  const { runId, mode, sectorKey, filters } = (await req.json()) as {
+  const { runId, searchType, mode, sectorKey, filters } = (await req.json()) as {
     runId: string;
+    searchType: unknown;
     mode: Mode;
     sectorKey: string;
     filters?: unknown;
   };
 
-  if (!runId || !mode || !sectorKey) {
-    return NextResponse.json({ error: "Missing runId, mode, or sectorKey" }, { status: 400 });
+  if (!runId || !mode || !sectorKey || !isSearchType(searchType)) {
+    return NextResponse.json({ error: "Missing runId, searchType, mode, or sectorKey" }, { status: 400 });
   }
 
   try {
@@ -122,6 +123,7 @@ export async function POST(req: NextRequest) {
           contact: null,
           pe_owned: null,
           search_filters: searchFilters,
+          search_type: searchType,
         } satisfies CompanyInsert;
       }
 
@@ -145,6 +147,7 @@ export async function POST(req: NextRequest) {
         contact: nullIfEmpty(c.contact),
         pe_owned: nullIfEmpty(c.pe_owned),
         search_filters: searchFilters,
+        search_type: searchType,
       } satisfies CompanyInsert;
     });
 

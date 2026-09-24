@@ -1,16 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { SECTOR_ORDER, type Mode } from "@/lib/sectors";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { sectorLabel, sectorsFor, type Mode, type SearchType } from "@/lib/sectors";
 import styles from "./page.module.css";
-
-const SECTOR_LABELS: Record<string, string> = {
-  environmental_services: "Environmental Services",
-  facility_services: "Facility Services",
-  utility_services: "Utility Services",
-  manufacturing: "Manufacturing",
-  b2b_services: "B2B Services",
-};
 
 type CategoryState = "idle" | "creating" | "running" | "collecting" | "done" | "error";
 
@@ -21,6 +13,7 @@ interface CategoryStatus {
 
 interface CompanyRow {
   id: number;
+  search_type: SearchType;
   mode: Mode;
   category: string;
   company: string;
@@ -52,6 +45,33 @@ const FILTER_FIELDS: { key: keyof FilterInputs; label: string }[] = [
   { key: "maxRevenueM", label: "Max Revenue ($M)" },
   { key: "minEbitdaM", label: "Min EBITDA ($M)" },
   { key: "maxEbitdaM", label: "Max EBITDA ($M)" },
+];
+
+// Shown only as placeholder hints on the platform tab; nothing is applied unless typed in.
+const PLATFORM_HINTS: Record<keyof FilterInputs, string> = {
+  minRevenueM: "e.g. 10",
+  maxRevenueM: "e.g. 75",
+  minEbitdaM: "e.g. 2",
+  maxEbitdaM: "e.g. 7",
+};
+
+const TABS: { type: SearchType; label: string; blurb: string }[] = [
+  {
+    type: "addon",
+    label: "Add-On Search",
+    blurb: "Targeted add-on candidates in Rockwood's five add-on focus areas.",
+  },
+  {
+    type: "platform",
+    label: "Platform Search",
+    blurb:
+      "Broader search for new platform companies: North America HQ across Industrials, Specialized B2B, Regulated Industries, Aerospace & Defense, Environmental and Healthcare. Excludes contractors and heavy commodity-risk businesses.",
+  },
+];
+
+const MODES: { mode: Mode; buttonLabel: string }[] = [
+  { mode: "for_sale", buttonLabel: "Search For-Sale Listings" },
+  { mode: "proprietary", buttonLabel: "Search Proprietary Targets" },
 ];
 
 interface ColumnDef {
@@ -121,10 +141,16 @@ const PROPRIETARY_COLUMNS: ColumnDef[] = [
   DATE_FOUND,
 ];
 
-function initialStatuses(): Record<Mode, Record<string, CategoryStatus>> {
+type StatusMap = Record<SearchType, Record<Mode, Record<string, CategoryStatus>>>;
+
+function idleStatuses(searchType: SearchType): Record<Mode, Record<string, CategoryStatus>> {
   const make = () =>
-    Object.fromEntries(SECTOR_ORDER.map((k) => [k, { state: "idle" as CategoryState }]));
+    Object.fromEntries(sectorsFor(searchType).map((k) => [k, { state: "idle" as CategoryState }]));
   return { for_sale: make(), proprietary: make() };
+}
+
+function initialStatuses(): StatusMap {
+  return { addon: idleStatuses("addon"), platform: idleStatuses("platform") };
 }
 
 async function pollRunUntilDone(runId: string): Promise<void> {
@@ -180,81 +206,111 @@ function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRo
 }
 
 export default function Home() {
-  const [statuses, setStatuses] = useState(initialStatuses());
-  const [runningMode, setRunningMode] = useState<Mode | null>(null);
+  const [tab, setTab] = useState<SearchType>("addon");
+  const [statuses, setStatuses] = useState<StatusMap>(initialStatuses);
+  const [running, setRunning] = useState<{ searchType: SearchType; mode: Mode } | null>(null);
   const [resetting, setResetting] = useState(false);
-  const [rows, setRows] = useState<CompanyRow[]>([]);
+  const [rowsData, setRowsData] = useState<{ type: SearchType; rows: CompanyRow[] } | null>(null);
   const [loadingRows, setLoadingRows] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [filterInputs, setFilterInputs] = useState<FilterInputs>(EMPTY_FILTERS);
+  const [filterInputs, setFilterInputs] = useState<Record<SearchType, FilterInputs>>({
+    addon: EMPTY_FILTERS,
+    platform: EMPTY_FILTERS,
+  });
 
-  const fetchRows = useCallback(async () => {
-    setLoadingRows(true);
-    try {
-      const params = new URLSearchParams();
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+
+  // Rows are tagged with their tab, and a late response for another tab is dropped.
+  const fetchRows = useCallback(
+    async (type: SearchType) => {
+      const params = new URLSearchParams({ type });
       if (startDate) params.set("start", startDate);
       if (endDate) params.set("end", endDate);
       const res = await fetch(`/api/companies?${params.toString()}`);
       const data = await res.json();
-      setRows(data.rows ?? []);
+      if (type === tabRef.current) setRowsData({ type, rows: data.rows ?? [] });
+    },
+    [startDate, endDate]
+  );
+
+  const refresh = async () => {
+    setLoadingRows(true);
+    try {
+      await fetchRows(tab);
     } finally {
       setLoadingRows(false);
     }
-  }, [startDate, endDate]);
+  };
 
   useEffect(() => {
-    fetchRows();
-  }, [fetchRows]);
+    fetchRows(tab);
+  }, [tab, fetchRows]);
 
-  const updateStatus = (mode: Mode, sectorKey: string, patch: Partial<CategoryStatus>) => {
+  const rows = useMemo(() => (rowsData?.type === tab ? rowsData.rows : []), [rowsData, tab]);
+
+  const updateStatus = (searchType: SearchType, mode: Mode, sectorKey: string, patch: Partial<CategoryStatus>) => {
     setStatuses((prev) => ({
       ...prev,
-      [mode]: { ...prev[mode], [sectorKey]: { ...prev[mode][sectorKey], ...patch } },
+      [searchType]: {
+        ...prev[searchType],
+        [mode]: {
+          ...prev[searchType][mode],
+          [sectorKey]: { ...prev[searchType][mode][sectorKey], ...patch },
+        },
+      },
     }));
   };
 
   const runSearch = async (mode: Mode) => {
-    const filters = Object.fromEntries(
-      Object.entries(filterInputs).filter(([, v]) => v.trim() !== "")
-    );
-    const min = (a: string, b: string) => a !== "" && b !== "" && Number(a) > Number(b);
-    if (min(filterInputs.minRevenueM, filterInputs.maxRevenueM) || min(filterInputs.minEbitdaM, filterInputs.maxEbitdaM)) {
+    const searchType = tab;
+    const inputs = filterInputs[searchType];
+    const filters = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ""));
+    const inverted = (a: string, b: string) => a !== "" && b !== "" && Number(a) > Number(b);
+    if (inverted(inputs.minRevenueM, inputs.maxRevenueM) || inverted(inputs.minEbitdaM, inputs.maxEbitdaM)) {
       window.alert("A minimum filter is larger than its maximum. Fix that before searching.");
       return;
     }
-    setRunningMode(mode);
+
+    const sectors = sectorsFor(searchType);
+    setRunning({ searchType, mode });
     setStatuses((prev) => ({
       ...prev,
-      [mode]: Object.fromEntries(SECTOR_ORDER.map((k) => [k, { state: "creating" as CategoryState }])),
+      [searchType]: {
+        ...prev[searchType],
+        [mode]: Object.fromEntries(sectors.map((k) => [k, { state: "creating" as CategoryState }])),
+      },
     }));
 
     await Promise.all(
-      SECTOR_ORDER.map(async (sectorKey) => {
+      sectors.map(async (sectorKey) => {
         try {
           const createRes = await fetch("/api/agent/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode, sectorKey, filters }),
+            body: JSON.stringify({ searchType, mode, sectorKey, filters }),
           });
           if (!createRes.ok) throw new Error((await createRes.json()).error ?? "Create failed");
           const { runId } = await createRes.json();
 
-          updateStatus(mode, sectorKey, { state: "running" });
+          updateStatus(searchType, mode, sectorKey, { state: "running" });
           await pollRunUntilDone(runId);
 
-          updateStatus(mode, sectorKey, { state: "collecting" });
+          updateStatus(searchType, mode, sectorKey, { state: "collecting" });
           const collectRes = await fetch("/api/agent/collect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ runId, mode, sectorKey, filters }),
+            body: JSON.stringify({ runId, searchType, mode, sectorKey, filters }),
           });
           if (!collectRes.ok) throw new Error((await collectRes.json()).error ?? "Collect failed");
 
-          updateStatus(mode, sectorKey, { state: "done" });
-          await fetchRows();
+          updateStatus(searchType, mode, sectorKey, { state: "done" });
+          await fetchRows(searchType);
         } catch (err) {
-          updateStatus(mode, sectorKey, {
+          updateStatus(searchType, mode, sectorKey, {
             state: "error",
             error: err instanceof Error ? err.message : "Unknown error",
           });
@@ -262,17 +318,19 @@ export default function Home() {
       })
     );
 
-    setRunningMode(null);
+    setRunning(null);
   };
 
-  const resetAll = async () => {
-    if (!window.confirm("Delete all saved results? This cannot be undone.")) return;
+  const tabLabel = TABS.find((t) => t.type === tab)!.label;
+
+  const resetTab = async () => {
+    if (!window.confirm(`Delete all saved ${tabLabel} results? This cannot be undone. The other tab is not affected.`)) return;
     setResetting(true);
     try {
-      const res = await fetch("/api/companies", { method: "DELETE" });
+      const res = await fetch(`/api/companies?type=${tab}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error ?? "Reset failed");
-      setStatuses(initialStatuses());
-      await fetchRows();
+      setStatuses((prev) => ({ ...prev, [tab]: idleStatuses(tab) }));
+      await fetchRows(tab);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Reset failed");
     } finally {
@@ -281,24 +339,42 @@ export default function Home() {
   };
 
   const exportHref = useMemo(() => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ type: tab });
     if (startDate) params.set("start", startDate);
     if (endDate) params.set("end", endDate);
-    const qs = params.toString();
-    return `/api/export${qs ? `?${qs}` : ""}`;
-  }, [startDate, endDate]);
+    return `/api/export?${params.toString()}`;
+  }, [tab, startDate, endDate]);
 
   const forSaleRows = rows.filter((r) => r.mode === "for_sale");
   const proprietaryRows = rows.filter((r) => r.mode === "proprietary");
+  const sectors = sectorsFor(tab);
+  const busy = running !== null;
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>Rockwood Add-On Search</h1>
+        <h1>Rockwood Search</h1>
       </header>
 
+      <nav className={styles.tabs} role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.type}
+            role="tab"
+            aria-selected={tab === t.type}
+            className={tab === t.type ? styles.tabActive : styles.tab}
+            onClick={() => setTab(t.type)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      <p className={styles.tabBlurb}>{TABS.find((t) => t.type === tab)!.blurb}</p>
+
       <section className={styles.searchFilters}>
-        <span className={styles.searchFiltersTitle}>Hard cutoffs for searches (leave blank for no limit)</span>
+        <span className={styles.searchFiltersTitle}>
+          Hard cutoffs for {tabLabel.toLowerCase()}es (leave blank for no limit)
+        </span>
         {FILTER_FIELDS.map((f) => (
           <label key={f.key}>
             {f.label}
@@ -307,70 +383,48 @@ export default function Home() {
               min="0"
               step="any"
               inputMode="decimal"
-              value={filterInputs[f.key]}
-              onChange={(e) => setFilterInputs((prev) => ({ ...prev, [f.key]: e.target.value }))}
-              disabled={runningMode !== null}
+              placeholder={tab === "platform" ? PLATFORM_HINTS[f.key] : undefined}
+              value={filterInputs[tab][f.key]}
+              onChange={(e) =>
+                setFilterInputs((prev) => ({ ...prev, [tab]: { ...prev[tab], [f.key]: e.target.value } }))
+              }
+              disabled={busy}
             />
           </label>
         ))}
+        {tab === "platform" && (
+          <span className={styles.filterHint}>
+            Rockwood&rsquo;s stated target range is $10&ndash;75M revenue and $2&ndash;7M EBITDA. Nothing is applied unless you enter it here.
+          </span>
+        )}
       </section>
 
       <section className={styles.runPanel}>
-        <div className={styles.modeBlock}>
-          <button
-            className={styles.runButton}
-            disabled={runningMode !== null}
-            onClick={() => runSearch("for_sale")}
-          >
-            {runningMode === "for_sale" ? "Running…" : "Search For-Sale Listings"}
-          </button>
-          <ul className={styles.statusList}>
-            {SECTOR_ORDER.map((key) => {
-              const s = statuses.for_sale[key];
-              return (
-                <li key={key} className={styles[`status_${s.state}`]}>
-                  <span>{SECTOR_LABELS[key]}</span>
-                  <span className={styles.statusDetail}>
-                    {s.state === "idle" && "idle"}
-                    {s.state === "creating" && "creating…"}
-                    {s.state === "running" && "researching…"}
-                    {s.state === "collecting" && "saving…"}
-                    {s.state === "done" && "done"}
-                    {s.state === "error" && `error: ${s.error}`}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <div className={styles.modeBlock}>
-          <button
-            className={styles.runButton}
-            disabled={runningMode !== null}
-            onClick={() => runSearch("proprietary")}
-          >
-            {runningMode === "proprietary" ? "Running…" : "Search Proprietary Targets"}
-          </button>
-          <ul className={styles.statusList}>
-            {SECTOR_ORDER.map((key) => {
-              const s = statuses.proprietary[key];
-              return (
-                <li key={key} className={styles[`status_${s.state}`]}>
-                  <span>{SECTOR_LABELS[key]}</span>
-                  <span className={styles.statusDetail}>
-                    {s.state === "idle" && "idle"}
-                    {s.state === "creating" && "creating…"}
-                    {s.state === "running" && "researching…"}
-                    {s.state === "collecting" && "saving…"}
-                    {s.state === "done" && "done"}
-                    {s.state === "error" && `error: ${s.error}`}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        {MODES.map(({ mode, buttonLabel }) => (
+          <div key={mode} className={styles.modeBlock}>
+            <button className={styles.runButton} disabled={busy} onClick={() => runSearch(mode)}>
+              {running?.searchType === tab && running.mode === mode ? "Running…" : buttonLabel}
+            </button>
+            <ul className={styles.statusList}>
+              {sectors.map((key) => {
+                const s = statuses[tab][mode][key];
+                return (
+                  <li key={key} className={styles[`status_${s.state}`]}>
+                    <span>{sectorLabel(key)}</span>
+                    <span className={styles.statusDetail}>
+                      {s.state === "idle" && "idle"}
+                      {s.state === "creating" && "creating…"}
+                      {s.state === "running" && "researching…"}
+                      {s.state === "collecting" && "saving…"}
+                      {s.state === "done" && "done"}
+                      {s.state === "error" && `error: ${s.error}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
       </section>
 
       <section className={styles.filterBar}>
@@ -382,14 +436,14 @@ export default function Home() {
           End Date
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
-        <button onClick={fetchRows} disabled={loadingRows}>
+        <button onClick={refresh} disabled={loadingRows}>
           {loadingRows ? "Loading…" : "Refresh"}
         </button>
         <a className={styles.exportButton} href={exportHref}>
           Download Excel
         </a>
-        <button className={styles.resetButton} onClick={resetAll} disabled={resetting}>
-          {resetting ? "Resetting…" : "Reset All Results"}
+        <button className={styles.resetButton} onClick={resetTab} disabled={resetting}>
+          {resetting ? "Resetting…" : `Reset ${tabLabel} Results`}
         </button>
         <span className={styles.rowCount}>{rows.length} total rows</span>
       </section>

@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteAllCompanies, queryCompanies } from "@/lib/db";
+import { deleteCompaniesOfType, queryCompanies } from "@/lib/db";
+import { isSearchType } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  const type = req.nextUrl.searchParams.get("type") ?? "addon";
   const start = req.nextUrl.searchParams.get("start") || undefined;
   const end = req.nextUrl.searchParams.get("end") || undefined;
 
+  if (!isSearchType(type)) {
+    return NextResponse.json({ error: "Invalid type" }, { status: 400 });
+  }
+
   try {
-    const rows = await queryCompanies(start, end);
+    const rows = await queryCompanies(type, start, end);
     return NextResponse.json({ rows });
   } catch (err) {
     return NextResponse.json(
@@ -18,9 +24,15 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function DELETE() {
+// The type is required (no default) so a bare DELETE can never wipe anything.
+export async function DELETE(req: NextRequest) {
+  const type = req.nextUrl.searchParams.get("type");
+  if (!isSearchType(type)) {
+    return NextResponse.json({ error: "A valid type (addon or platform) is required" }, { status: 400 });
+  }
+
   try {
-    await deleteAllCompanies();
+    await deleteCompaniesOfType(type);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

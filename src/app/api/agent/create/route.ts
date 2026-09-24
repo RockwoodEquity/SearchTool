@@ -1,24 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
-import { buildAgentRunSpec, sanitizeFilters, type Mode } from "@/lib/sectors";
+import { buildAgentRunSpec, isSearchType, sanitizeFilters, sectorsFor, type Mode } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const { mode, sectorKey, filters } = (await req.json()) as {
+  const { searchType, mode, sectorKey, filters } = (await req.json()) as {
+    searchType: unknown;
     mode: Mode;
     sectorKey: string;
     filters?: unknown;
   };
 
+  if (!isSearchType(searchType)) {
+    return NextResponse.json({ error: "Invalid searchType" }, { status: 400 });
+  }
+  if (!sectorsFor(searchType).includes(sectorKey)) {
+    return NextResponse.json({ error: "Sector does not belong to this search type" }, { status: 400 });
+  }
   if (mode !== "for_sale" && mode !== "proprietary") {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
   }
 
   try {
     const exa = getExaClient();
-    const { query, outputSchema } = buildAgentRunSpec(mode, sectorKey, sanitizeFilters(filters));
+    const { query, outputSchema } = buildAgentRunSpec(searchType, mode, sectorKey, sanitizeFilters(filters));
 
     const run = await exa.agent.runs.create({
       query,
