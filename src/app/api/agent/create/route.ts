@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
-import { buildAgentRunSpec, type Mode } from "@/lib/sectors";
+import { buildAgentRunSpec, sanitizeFilters, type Mode } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const { mode, sectorKey } = (await req.json()) as { mode: Mode; sectorKey: string };
+  const { mode, sectorKey, filters } = (await req.json()) as {
+    mode: Mode;
+    sectorKey: string;
+    filters?: unknown;
+  };
 
   if (mode !== "for_sale" && mode !== "proprietary") {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
@@ -14,7 +18,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const exa = getExaClient();
-    const { query, outputSchema } = buildAgentRunSpec(mode, sectorKey);
+    const { query, outputSchema } = buildAgentRunSpec(mode, sectorKey, sanitizeFilters(filters));
 
     const run = await exa.agent.runs.create({
       query,

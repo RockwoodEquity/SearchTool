@@ -16,6 +16,7 @@ export interface CompanyRow {
   listing_date: string | null;
   contact: string | null;
   pe_owned: string | null;
+  search_filters: string | null;
   date_found: string;
 }
 
@@ -33,6 +34,7 @@ export interface CompanyInsert {
   listing_date: string | null;
   contact: string | null;
   pe_owned: string | null;
+  search_filters: string | null;
 }
 
 let pool: Pool | null = null;
@@ -75,6 +77,7 @@ export async function ensureSchema() {
       date_found TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await getPool().query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS search_filters TEXT`);
   initialized = true;
 }
 
@@ -105,8 +108,8 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
         `INSERT INTO companies (
           mode, category, company, website, link_to_listing, location,
           employees, revenue_or_price, why_fits, broker_source, listing_date,
-          contact, pe_owned
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          contact, pe_owned, search_filters
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           row.mode,
           row.category,
@@ -121,6 +124,7 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
           row.listing_date,
           row.contact,
           row.pe_owned,
+          row.search_filters,
         ]
       );
       inserted++;

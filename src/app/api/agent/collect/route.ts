@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
 import { insertCompanies, type CompanyInsert } from "@/lib/db";
-import { sectorLabel, type Mode } from "@/lib/sectors";
+import { formatFilterLabel, sanitizeFilters, sectorLabel, type Mode } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -62,10 +62,11 @@ function sourceUrlForIndex(
 }
 
 export async function POST(req: NextRequest) {
-  const { runId, mode, sectorKey } = (await req.json()) as {
+  const { runId, mode, sectorKey, filters } = (await req.json()) as {
     runId: string;
     mode: Mode;
     sectorKey: string;
+    filters?: unknown;
   };
 
   if (!runId || !mode || !sectorKey) {
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     const categoryLabel = sectorLabel(sectorKey);
+    const searchFilters = formatFilterLabel(sanitizeFilters(filters));
     const structured = run.output?.structured as { companies?: unknown[] } | undefined;
     const companies = Array.isArray(structured?.companies) ? structured!.companies : [];
     const grounding = (run.output?.grounding ?? null) as GroundingEntry[] | null;
@@ -119,6 +121,7 @@ export async function POST(req: NextRequest) {
           listing_date: listingDate,
           contact: null,
           pe_owned: null,
+          search_filters: searchFilters,
         } satisfies CompanyInsert;
       }
 
@@ -141,6 +144,7 @@ export async function POST(req: NextRequest) {
         listing_date: null,
         contact: nullIfEmpty(c.contact),
         pe_owned: nullIfEmpty(c.pe_owned),
+        search_filters: searchFilters,
       } satisfies CompanyInsert;
     });
 

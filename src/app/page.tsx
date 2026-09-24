@@ -34,8 +34,25 @@ interface CompanyRow {
   listing_date: string | null;
   contact: string | null;
   pe_owned: string | null;
+  search_filters: string | null;
   date_found: string;
 }
+
+interface FilterInputs {
+  minRevenueM: string;
+  maxRevenueM: string;
+  minEbitdaM: string;
+  maxEbitdaM: string;
+}
+
+const EMPTY_FILTERS: FilterInputs = { minRevenueM: "", maxRevenueM: "", minEbitdaM: "", maxEbitdaM: "" };
+
+const FILTER_FIELDS: { key: keyof FilterInputs; label: string }[] = [
+  { key: "minRevenueM", label: "Min Revenue ($M)" },
+  { key: "maxRevenueM", label: "Max Revenue ($M)" },
+  { key: "minEbitdaM", label: "Min EBITDA ($M)" },
+  { key: "maxEbitdaM", label: "Max EBITDA ($M)" },
+];
 
 interface ColumnDef {
   header: string;
@@ -68,6 +85,11 @@ const DATE_FOUND: ColumnDef = {
   render: (row) => new Date(row.date_found).toLocaleDateString(),
 };
 
+const FILTER_COLUMN: ColumnDef = {
+  header: "Revenue / EBITDA Filter",
+  render: (row) => row.search_filters,
+};
+
 const FOR_SALE_COLUMNS: ColumnDef[] = [
   { header: "Category", render: (r) => r.category },
   { header: "Company", render: (r) => r.company },
@@ -76,6 +98,7 @@ const FOR_SALE_COLUMNS: ColumnDef[] = [
   { header: "Location", render: (r) => r.location },
   { header: "Employees", render: (r) => r.employees },
   { header: "Asking Price / Revenue", render: (r) => r.revenue_or_price },
+  FILTER_COLUMN,
   { header: "Why it fits", render: (r) => r.why_fits, className: "whyCell" },
   { header: "Broker/Source", render: (r) => r.broker_source },
   { header: "Listing Date", render: (r) => r.listing_date },
@@ -90,6 +113,7 @@ const PROPRIETARY_COLUMNS: ColumnDef[] = [
   { header: "Location", render: (r) => r.location },
   { header: "Employees", render: (r) => r.employees },
   { header: "Est. Revenue", render: (r) => r.revenue_or_price },
+  FILTER_COLUMN,
   { header: "Currently For Sale?", render: (r) => r.broker_source },
   { header: "Contact", render: (r) => r.contact },
   { header: "Already PE-owned?", render: (r) => r.pe_owned },
@@ -163,6 +187,7 @@ export default function Home() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [filterInputs, setFilterInputs] = useState<FilterInputs>(EMPTY_FILTERS);
 
   const fetchRows = useCallback(async () => {
     setLoadingRows(true);
@@ -190,6 +215,14 @@ export default function Home() {
   };
 
   const runSearch = async (mode: Mode) => {
+    const filters = Object.fromEntries(
+      Object.entries(filterInputs).filter(([, v]) => v.trim() !== "")
+    );
+    const min = (a: string, b: string) => a !== "" && b !== "" && Number(a) > Number(b);
+    if (min(filterInputs.minRevenueM, filterInputs.maxRevenueM) || min(filterInputs.minEbitdaM, filterInputs.maxEbitdaM)) {
+      window.alert("A minimum filter is larger than its maximum. Fix that before searching.");
+      return;
+    }
     setRunningMode(mode);
     setStatuses((prev) => ({
       ...prev,
@@ -202,7 +235,7 @@ export default function Home() {
           const createRes = await fetch("/api/agent/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode, sectorKey }),
+            body: JSON.stringify({ mode, sectorKey, filters }),
           });
           if (!createRes.ok) throw new Error((await createRes.json()).error ?? "Create failed");
           const { runId } = await createRes.json();
@@ -214,7 +247,7 @@ export default function Home() {
           const collectRes = await fetch("/api/agent/collect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ runId, mode, sectorKey }),
+            body: JSON.stringify({ runId, mode, sectorKey, filters }),
           });
           if (!collectRes.ok) throw new Error((await collectRes.json()).error ?? "Collect failed");
 
@@ -263,6 +296,24 @@ export default function Home() {
       <header className={styles.header}>
         <h1>Rockwood Add-On Search</h1>
       </header>
+
+      <section className={styles.searchFilters}>
+        <span className={styles.searchFiltersTitle}>Hard cutoffs for searches (leave blank for no limit)</span>
+        {FILTER_FIELDS.map((f) => (
+          <label key={f.key}>
+            {f.label}
+            <input
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={filterInputs[f.key]}
+              onChange={(e) => setFilterInputs((prev) => ({ ...prev, [f.key]: e.target.value }))}
+              disabled={runningMode !== null}
+            />
+          </label>
+        ))}
+      </section>
 
       <section className={styles.runPanel}>
         <div className={styles.modeBlock}>

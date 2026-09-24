@@ -86,9 +86,75 @@ export interface AgentRunSpec {
   outputSchema: Record<string, unknown>;
 }
 
-export function buildAgentRunSpec(mode: Mode, sectorKey: string): AgentRunSpec {
+/** Hard revenue / EBITDA cutoffs in $ millions. Any bound may be omitted. */
+export interface SearchFilters {
+  minRevenueM?: number;
+  maxRevenueM?: number;
+  minEbitdaM?: number;
+  maxEbitdaM?: number;
+}
+
+function cleanBound(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+export function sanitizeFilters(raw: unknown): SearchFilters {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    minRevenueM: cleanBound(r.minRevenueM),
+    maxRevenueM: cleanBound(r.maxRevenueM),
+    minEbitdaM: cleanBound(r.minEbitdaM),
+    maxEbitdaM: cleanBound(r.maxEbitdaM),
+  };
+}
+
+function rangeText(label: string, min?: number, max?: number): string | null {
+  if (min !== undefined && max !== undefined) return `${label} $${min}M-$${max}M`;
+  if (min !== undefined) return `${label} >= $${min}M`;
+  if (max !== undefined) return `${label} <= $${max}M`;
+  return null;
+}
+
+/** Short label of the filters applied to a search, stored on each result row. */
+export function formatFilterLabel(filters: SearchFilters): string | null {
+  const parts = [
+    rangeText("Revenue", filters.minRevenueM, filters.maxRevenueM),
+    rangeText("EBITDA", filters.minEbitdaM, filters.maxEbitdaM),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
+function financialRequirementBlock(filters: SearchFilters): string[] {
+  const revenue = rangeText("annual revenue", filters.minRevenueM, filters.maxRevenueM);
+  const ebitda = rangeText("annual EBITDA", filters.minEbitdaM, filters.maxEbitdaM);
+  if (!revenue && !ebitda) return [];
+
+  const bounds = (min?: number, max?: number) =>
+    [min !== undefined ? `at least $${min} million` : null, max !== undefined ? `at most $${max} million` : null]
+      .filter(Boolean)
+      .join(" and ");
+
+  const lines = [
+    "",
+    "HARD FINANCIAL CUTOFFS — these are strict pass/fail requirements, not preferences:",
+  ];
+  if (revenue) lines.push(`- Annual revenue must be ${bounds(filters.minRevenueM, filters.maxRevenueM)}.`);
+  if (ebitda) lines.push(`- Annual EBITDA must be ${bounds(filters.minEbitdaM, filters.maxEbitdaM)}.`);
+  lines.push(
+    "Most private companies do not publish revenue or EBITDA, so use disclosed figures where they exist; otherwise use the best credible estimate (business databases, broker listings, employee count and typical revenue per employee for the industry, typical industry margins for EBITDA). Include a company only if its disclosed or best-estimated figures fall inside these bounds. Exclude any company whose figures or best estimate fall outside them, and exclude any company with no credible basis at all for placing it inside them. Returning fewer than the maximum number of results is fine; never pad the list with companies that fail these cutoffs."
+  );
+  return lines;
+}
+
+export function buildAgentRunSpec(
+  mode: Mode,
+  sectorKey: string,
+  filters: SearchFilters = {}
+): AgentRunSpec {
   const base = BASE_SECTORS[sectorKey];
   if (!base) throw new Error(`Unknown sector: ${sectorKey}`);
+  const financialBlock = financialRequirementBlock(filters);
 
   if (mode === "for_sale") {
     const query = [
@@ -97,6 +163,7 @@ export function buildAgentRunSpec(mode: Mode, sectorKey: string): AgentRunSpec {
       "",
       "A result only counts if it is actively marketed for sale right now — listed on a business-for-sale marketplace (e.g. BizBuySell, Axial, a broker's site) or similar — not merely a company website with no for-sale listing. Also require:",
       criteriaBlock(base.criteria),
+      ...financialBlock,
       "",
       "Return each distinct business only once. For each, include the direct link to the for-sale listing itself (not just the company's own website) whenever one exists.",
     ].join("\n");
@@ -145,6 +212,7 @@ export function buildAgentRunSpec(mode: Mode, sectorKey: string): AgentRunSpec {
     "",
     "Require:",
     criteriaBlock(base.criteria),
+    ...financialBlock,
     "",
     "These are proprietary acquisition targets, not businesses currently marketed for sale — do not limit results to for-sale listings. Return each distinct company only once.",
   ].join("\n");
