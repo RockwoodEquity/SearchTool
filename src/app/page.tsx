@@ -265,28 +265,36 @@ export default function Home() {
     }));
   };
 
-  const runSearch = async (mode: Mode) => {
-    const searchType = tab;
+  const validatedFilters = (searchType: SearchType) => {
     const inputs = filterInputs[searchType];
-    const filters = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ""));
     const inverted = (a: string, b: string) => a !== "" && b !== "" && Number(a) > Number(b);
     if (inverted(inputs.minRevenueM, inputs.maxRevenueM) || inverted(inputs.minEbitdaM, inputs.maxEbitdaM)) {
       window.alert("A minimum filter is larger than its maximum. Fix that before searching.");
-      return;
+      return null;
     }
+    return Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ""));
+  };
 
-    const sectors = sectorsFor(searchType);
+  // Shared by both the "run all sectors" button and each category's own "Run" button.
+  const runSectors = async (mode: Mode, sectorKeys: readonly string[]) => {
+    const searchType = tab;
+    const filters = validatedFilters(searchType);
+    if (!filters) return;
+
     setRunning({ searchType, mode });
     setStatuses((prev) => ({
       ...prev,
       [searchType]: {
         ...prev[searchType],
-        [mode]: Object.fromEntries(sectors.map((k) => [k, { state: "creating" as CategoryState }])),
+        [mode]: {
+          ...prev[searchType][mode],
+          ...Object.fromEntries(sectorKeys.map((k) => [k, { state: "creating" as CategoryState }])),
+        },
       },
     }));
 
     await Promise.all(
-      sectors.map(async (sectorKey) => {
+      sectorKeys.map(async (sectorKey) => {
         try {
           const createRes = await fetch("/api/agent/create", {
             method: "POST",
@@ -320,6 +328,9 @@ export default function Home() {
 
     setRunning(null);
   };
+
+  const runSearch = (mode: Mode) => runSectors(mode, sectorsFor(tab));
+  const runOneSector = (mode: Mode, sectorKey: string) => runSectors(mode, [sectorKey]);
 
   const tabLabel = TABS.find((t) => t.type === tab)!.label;
 
@@ -419,6 +430,13 @@ export default function Home() {
                       {s.state === "done" && "done"}
                       {s.state === "error" && `error: ${s.error}`}
                     </span>
+                    <button
+                      className={styles.runOneButton}
+                      disabled={busy}
+                      onClick={() => runOneSector(mode, key)}
+                    >
+                      Run
+                    </button>
                   </li>
                 );
               })}

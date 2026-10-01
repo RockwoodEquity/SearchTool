@@ -126,9 +126,27 @@
   gap: 6px;
 }
 
+.runOneButton {
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  border: 1px solid #1a1a2e;
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a2e;
+  cursor: pointer;
+}
+
+.runOneButton:disabled {
+  border-color: #bbb;
+  color: #999;
+  cursor: not-allowed;
+}
+
 .statusList li {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 6px 10px;
   border-radius: 4px;
   background: #fff;
@@ -138,6 +156,9 @@
 
 .statusDetail {
   color: #666;
+  flex: 1;
+  text-align: right;
+  padding-right: 10px;
 }
 
 .status_running .statusDetail {
