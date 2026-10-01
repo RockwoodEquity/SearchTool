@@ -123,6 +123,19 @@ Object.assign(BASE_SECTORS, {
       "For subsector (1) specialized medical equipment and subsector (2) contract manufacturing specifically: the equipment, process, or facility is part of an FDA qualification or validation process",
     ],
   },
+  field_services: {
+    label: "Field Services",
+    description:
+      "Occupational health, industrial hygiene, environmental testing, and safety training and certification services in three subsectors. " +
+      "(1) Occupational health services: mobile medical surveillance and testing — technicians and mobile units that work on employer sites to deliver OSHA/MSHA-required medical surveillance such as hearing, vision, and drug testing, with revenue paid by employers (not third-party payors) and driven by regulation; and DOT compliance testing providers that manage DOT-mandated drug/alcohol testing and driver qualification files (comparable companies/deals: Examinetics, U.S. Mobile Health Exams). " +
+      "(2) Industrial hygiene and environmental testing: industrial hygiene and field-based EHS consulting performing on-site exposure monitoring (lead, benzene, hexavalent chromium, noise, asbestos), air quality, and other field sampling; and emissions testing — stack testing, CEMS certification, Title V compliance testing, and ambient air monitoring performed by QSTI-credentialed field crews with mobile testing equipment (comparable companies/deals: ALL4, AirKinetics/Montrose Environmental Group). " +
+      "(3) Safety training and certification: equipment/operator certification such as crane operator, forklift, aerial lift, and fall protection competency evaluations delivered by qualified evaluators; and emergency response training such as hazardous waste operations and emergency response training (comparable companies/deals: SMART Safety, Fleet Team, Southeast Lineman Training Center).",
+    criteria: [
+      PLATFORM_GEOGRAPHY,
+      PLATFORM_OWNERSHIP,
+      "Revenue is driven by regulatory or compliance requirements (OSHA/MSHA, DOT, EPA/Title V, or similar certification/testing mandates), not discretionary spend",
+    ],
+  },
 });
 
 const PLATFORM_EXCLUSIONS: string[] = [
@@ -149,6 +162,7 @@ export const PLATFORM_SECTOR_ORDER = [
   "platform_environmental",
   "platform_healthcare",
   "xlcs",
+  "field_services",
 ] as const;
 
 export function isSearchType(v: unknown): v is SearchType {
