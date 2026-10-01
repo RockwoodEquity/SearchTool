@@ -108,6 +108,21 @@ Object.assign(BASE_SECTORS, {
       "Healthcare businesses: medical and assistive product manufacturers, healthcare products distribution, medical device outsourcing and contract services, and non-clinical healthcare services.",
     criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Serves healthcare, medical or patient-care end markets"],
   },
+  xlcs: {
+    label: "XLCS",
+    description:
+      "Specialty medical equipment, manufacturing and services businesses in three subsectors. " +
+      "(1) Specialized medical equipment with consumables and service: manufacturers of machinery and automation used by medical device and laboratory customers, where the equipment addresses a specific process step in a production facility and is validated into that process — for example catheter manufacturing equipment, heat sealers, vision systems, assembly automation, and labeling/serialization systems (comparable companies/deals: SYNEO, Accu-Seal, Parks Medical Electronics). " +
+      "(2) Contract manufacturing services: specialized contract manufacturers focused on medical device production in niche applications, not full-service outsourcing — for example sterilization, FDA/regulatory documentation, mold design/tooling, kitting, and cleanroom contract manufacturing (comparable companies/deals: MRPC, Prince Sterilization Services, Assem-Pak/Aluseal). " +
+      "(3) In-home health equipment and repair services: companies that rent, sell, or lease medical equipment designed for use in the home, for patients directly, insurance, or home health facilities, where people physically go into the home to install, deliver, or service the equipment — for example accessibility equipment (stairlifts, ramps, scooters, lift equipment), positioning equipment (specialized mattresses, lift systems), respiratory equipment (CPAP/BiPAP), incontinence products/services, and OT therapy services (comparable companies/deals: Lifeway Mobility, Star Pediatric Home Care).",
+    criteria: [
+      "Headquartered in the US",
+      PLATFORM_OWNERSHIP,
+      "At least 20 employees",
+      "No meaningful concentration in a single customer or program",
+      "For subsector (1) specialized medical equipment and subsector (2) contract manufacturing specifically: the equipment, process, or facility is part of an FDA qualification or validation process",
+    ],
+  },
 });
 
 const PLATFORM_EXCLUSIONS: string[] = [
@@ -133,6 +148,7 @@ export const PLATFORM_SECTOR_ORDER = [
   "platform_aerospace_defense",
   "platform_environmental",
   "platform_healthcare",
+  "xlcs",
 ] as const;
 
 export function isSearchType(v: unknown): v is SearchType {
