@@ -108,23 +108,39 @@ Object.assign(BASE_SECTORS, {
       "Healthcare businesses: medical and assistive product manufacturers, healthcare products distribution, medical device outsourcing and contract services, and non-clinical healthcare services.",
     criteria: [PLATFORM_GEOGRAPHY, PLATFORM_OWNERSHIP, "Serves healthcare, medical or patient-care end markets"],
   },
-  xlcs: {
-    label: "XLCS",
+  specialty_medical: {
+    label: "Specialty Medical Equipment, Manufacturing & Services",
     description:
-      "Specialty medical equipment, manufacturing and services businesses in three subsectors. " +
+      "Specialty medical products and services businesses in three subsectors. " +
       "(1) Specialized medical equipment with consumables and service: manufacturers of machinery and automation used by medical device and laboratory customers, where the equipment addresses a specific process step in a production facility and is validated into that process — for example catheter manufacturing equipment, heat sealers, vision systems, assembly automation, and labeling/serialization systems (comparable companies/deals: SYNEO, Accu-Seal, Parks Medical Electronics). " +
-      "(2) Contract manufacturing services: specialized contract manufacturers focused on medical device production in niche applications, not full-service outsourcing — for example sterilization, FDA/regulatory documentation, mold design/tooling, kitting, and cleanroom contract manufacturing (comparable companies/deals: MRPC, Prince Sterilization Services, Assem-Pak/Aluseal). " +
-      "(3) In-home health equipment and repair services: companies that rent, sell, or lease medical equipment designed for use in the home, for patients directly, insurance, or home health facilities, where people physically go into the home to install, deliver, or service the equipment — for example accessibility equipment (stairlifts, ramps, scooters, lift equipment), positioning equipment (specialized mattresses, lift systems), respiratory equipment (CPAP/BiPAP), incontinence products/services, and OT therapy services (comparable companies/deals: Lifeway Mobility, Star Pediatric Home Care).",
+      "(2) Medical contract manufacturing: specialized contract manufacturers focused on medical device production in niche applications, not full-service outsourcing — for example sterilization, FDA/regulatory documentation, mold design/tooling, kitting, and cleanroom contract manufacturing (comparable companies/deals: MRPC, Prince Sterilization Services, Assem-Pak/Aluseal, Octex Group — an ISO 13485-certified contract manufacturer of complex components and assemblies). " +
+      "(3) Home medical equipment & services: companies that rent, sell, or lease medical equipment designed for use in the home, for patients directly, insurance, or home health facilities, where local technicians physically go into the home to deliver, install, or repair/service the equipment — for example accessibility equipment (stairlifts, ramps, scooters, lift equipment), positioning equipment (specialized mattresses, lift systems), respiratory equipment (CPAP/BiPAP), incontinence products/services, and OT therapy services (comparable companies/deals: Lifeway Mobility, Star Pediatric Home Care).",
     criteria: [
       "Headquartered in the US",
       PLATFORM_OWNERSHIP,
       "At least 20 employees",
-      "No meaningful concentration in a single customer or program",
-      "For subsector (1) specialized medical equipment and subsector (2) contract manufacturing specifically: the equipment, process, or facility is part of an FDA qualification or validation process",
+      "Favor niche, mission-critical applications with recurring consumables or service revenue",
+      "Favor diversified customer/program exposure; where there is customer or program concentration, it should be reasonable in light of qualification requirements, program duration, switching costs, and sole/dual-source status",
+      "The equipment, process, or facility is part of an FDA qualification or validation process",
+    ],
+  },
+  xlcs_search: {
+    label: "XLCS Search",
+    description:
+      "Sectors of interest in medical equipment, manufacturing, and in-home services, in three subsectors. " +
+      "(1) Specialized medical equipment with consumables and service: manufacturers of machinery and automation used in medical device and laboratory customers, where the equipment addresses specific process steps in a production facility and is validated into that process — examples: catheter manufacturing equipment, heat sealers, vision systems, assembly automation, labeling/serialization systems (representative deals: SYNEO, Accu-Seal, Parks Medical Electronics). " +
+      "(2) Contract manufacturing services: specialized contract manufacturers focused on medical device production in niche applications, not full-service outsourcing — example services: sterilization, FDA/regulatory documentation, mold design/tooling, kitting, cleanroom contract manufacturing (representative deals: MRPC, Prince Sterilization Services, Assem-Pak/Aluseal). " +
+      "(3) In-home health equipment and repair services: companies that rent, sell, or lease medical equipment designed to be used in a home setting, for patients directly, insurance, or home health facilities — key is that people go into the actual home to do the install, delivery, service, etc.; example categories: accessibility equipment (stairlifts, ramps, scooters, lift equipment), positioning equipment (specialized mattresses, lift systems), respiratory equipment (CPAP, BiPAP), incontinence products/services, OT therapy services (representative deals: Lifeway Mobility, Star Pediatric Home Care).",
+    criteria: [
+      "Headquartered in the US",
+      PLATFORM_OWNERSHIP,
+      "At least 20 employees",
+      "No customer or program concentration",
+      "For subsector (1) specialized medical equipment and subsector (2) contract manufacturing specifically: part of an FDA qualification process",
     ],
   },
   field_services: {
-    label: "Field Services",
+    label: "Field Services Search",
     description:
       "Occupational health, industrial hygiene, environmental testing, and safety training and certification services in three subsectors. " +
       "(1) Occupational health services: mobile medical surveillance and testing — technicians and mobile units that work on employer sites to deliver OSHA/MSHA-required medical surveillance such as hearing, vision, and drug testing, with revenue paid by employers (not third-party payors) and driven by regulation; and DOT compliance testing providers that manage DOT-mandated drug/alcohol testing and driver qualification files (comparable companies/deals: Examinetics, U.S. Mobile Health Exams). " +
@@ -161,7 +177,8 @@ export const PLATFORM_SECTOR_ORDER = [
   "platform_aerospace_defense",
   "platform_environmental",
   "platform_healthcare",
-  "xlcs",
+  "specialty_medical",
+  "xlcs_search",
   "field_services",
 ] as const;
 
