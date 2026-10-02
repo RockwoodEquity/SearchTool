@@ -124,21 +124,6 @@ Object.assign(BASE_SECTORS, {
       "The equipment, process, or facility is part of an FDA qualification or validation process",
     ],
   },
-  xlcs_search: {
-    label: "XLCS Search",
-    description:
-      "Sectors of interest in medical equipment, manufacturing, and in-home services, in three subsectors. " +
-      "(1) Specialized medical equipment with consumables and service: manufacturers of machinery and automation used in medical device and laboratory customers, where the equipment addresses specific process steps in a production facility and is validated into that process — examples: catheter manufacturing equipment, heat sealers, vision systems, assembly automation, labeling/serialization systems (representative deals: SYNEO, Accu-Seal, Parks Medical Electronics). " +
-      "(2) Contract manufacturing services: specialized contract manufacturers focused on medical device production in niche applications, not full-service outsourcing — example services: sterilization, FDA/regulatory documentation, mold design/tooling, kitting, cleanroom contract manufacturing (representative deals: MRPC, Prince Sterilization Services, Assem-Pak/Aluseal). " +
-      "(3) In-home health equipment and repair services: companies that rent, sell, or lease medical equipment designed to be used in a home setting, for patients directly, insurance, or home health facilities — key is that people go into the actual home to do the install, delivery, service, etc.; example categories: accessibility equipment (stairlifts, ramps, scooters, lift equipment), positioning equipment (specialized mattresses, lift systems), respiratory equipment (CPAP, BiPAP), incontinence products/services, OT therapy services (representative deals: Lifeway Mobility, Star Pediatric Home Care).",
-    criteria: [
-      "Headquartered in the US",
-      PLATFORM_OWNERSHIP,
-      "At least 20 employees",
-      "No customer or program concentration",
-      "For subsector (1) specialized medical equipment and subsector (2) contract manufacturing specifically: part of an FDA qualification process",
-    ],
-  },
   field_services: {
     label: "Field Services Search",
     description:
@@ -178,7 +163,6 @@ export const PLATFORM_SECTOR_ORDER = [
   "platform_environmental",
   "platform_healthcare",
   "specialty_medical",
-  "xlcs_search",
   "field_services",
 ] as const;
 
