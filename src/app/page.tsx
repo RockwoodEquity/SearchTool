@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { sectorLabel, sectorsFor, type Mode, type SearchType } from "@/lib/sectors";
+import {
+  SEARCH_PASSES,
+  sectorLabel,
+  sectorsFor,
+  type Mode,
+  type SearchPass,
+  type SearchType,
+} from "@/lib/sectors";
 import styles from "./page.module.css";
 
 type CategoryState = "idle" | "creating" | "running" | "collecting" | "done" | "error";
@@ -293,34 +300,40 @@ export default function Home() {
       },
     }));
 
+    // One full create -> wait -> save cycle for a single pass of a single focus area.
+    const runPass = async (sectorKey: string, pass: SearchPass) => {
+      const createRes = await fetch("/api/agent/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ searchType, mode, sectorKey, filters, pass }),
+      });
+      if (!createRes.ok) throw new Error((await createRes.json()).error ?? "Create failed");
+      const { runId } = await createRes.json();
+
+      updateStatus(searchType, mode, sectorKey, { state: "running" });
+      await pollRunUntilDone(runId);
+
+      const collectRes = await fetch("/api/agent/collect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId, searchType, mode, sectorKey, filters }),
+      });
+      if (!collectRes.ok) throw new Error((await collectRes.json()).error ?? "Collect failed");
+      await fetchRows(searchType);
+    };
+
     await Promise.all(
       sectorKeys.map(async (sectorKey) => {
-        try {
-          const createRes = await fetch("/api/agent/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ searchType, mode, sectorKey, filters }),
-          });
-          if (!createRes.ok) throw new Error((await createRes.json()).error ?? "Create failed");
-          const { runId } = await createRes.json();
+        const results = await Promise.allSettled(SEARCH_PASSES.map((pass) => runPass(sectorKey, pass)));
+        const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        const message = (r: PromiseRejectedResult) => (r.reason instanceof Error ? r.reason.message : "Unknown error");
 
-          updateStatus(searchType, mode, sectorKey, { state: "running" });
-          await pollRunUntilDone(runId);
-
-          updateStatus(searchType, mode, sectorKey, { state: "collecting" });
-          const collectRes = await fetch("/api/agent/collect", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ runId, searchType, mode, sectorKey, filters }),
-          });
-          if (!collectRes.ok) throw new Error((await collectRes.json()).error ?? "Collect failed");
-
-          updateStatus(searchType, mode, sectorKey, { state: "done" });
-          await fetchRows(searchType);
-        } catch (err) {
+        if (failures.length === results.length) {
+          updateStatus(searchType, mode, sectorKey, { state: "error", error: message(failures[0]) });
+        } else {
           updateStatus(searchType, mode, sectorKey, {
-            state: "error",
-            error: err instanceof Error ? err.message : "Unknown error",
+            state: "done",
+            error: failures.length > 0 ? `1 of ${results.length} passes failed: ${message(failures[0])}` : undefined,
           });
         }
       })
@@ -425,9 +438,8 @@ export default function Home() {
                     <span className={styles.statusDetail}>
                       {s.state === "idle" && "idle"}
                       {s.state === "creating" && "creating…"}
-                      {s.state === "running" && "researching…"}
-                      {s.state === "collecting" && "saving…"}
-                      {s.state === "done" && "done"}
+                      {s.state === "running" && "researching (2 passes)…"}
+                      {s.state === "done" && (s.error ? `done, but ${s.error}` : "done")}
                       {s.state === "error" && `error: ${s.error}`}
                     </span>
                     <button

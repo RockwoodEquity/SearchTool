@@ -61,6 +61,23 @@ const BASE_SECTORS: Record<string, BaseSector> = {
       "Independently owned, not part of a national dealer network",
     ],
   },
+  unified_aftermarket: {
+    label: "Aggregates, Mining & Bulk Material Processing: Aftermarket Products & Services",
+    description:
+      "Aftermarket products and services companies in the US and Canada that supply and service the crushing, screening and conveying equipment used at aggregate quarries, sand and gravel pits, mines, and recycling and bulk-material-handling plants. " +
+      "Products: wear parts and consumables for crushing, screening and conveying equipment, including screen media (woven wire cloth, polyurethane, rubber and plate/perforated), crusher wear parts and liners (jaw plates, cone and gyratory mantles and concaves, impact crusher blow bars), abrasion-resistant liners and wear products (rubber and ceramic liners, wear plate), and conveyor belting and components (belts, idlers, pulleys, belt cleaners, skirting). Also aftermarket parts distribution for aggregates, mining, sand and gravel, and recycling customers. " +
+      "Services: rebuild, repair and field service of crushers, screens and conveyors; conveyor belt installation, splicing and repair (including vulcanizing); hardfacing and wear-resistant welding; and plant maintenance services for quarries, pits and mines. " +
+      "Vocabulary that identifies these companies: aggregate, quarry, sand and gravel, mining supply, bulk material handling, wire cloth, screen media, crusher parts, wear parts, conveyor belting, industrial rubber products.",
+    criteria: [
+      "Makes, distributes, installs or services at least one of: screen media (wire cloth, polyurethane, rubber, plate), crusher wear parts and liners, abrasion-resistant liners and wear products, conveyor belting and components, or aftermarket parts for crushing, screening and conveying equipment",
+      "Or provides at least one of these services: crusher, screen or conveyor rebuild, repair or field service; conveyor belt installation, splicing or repair; hardfacing or wear-resistant welding; or plant maintenance for quarries, pits and mines",
+      "Customers are aggregate, quarry, sand and gravel, mining or recycling operations, with repeat or consumable (replacement) revenue rather than one-time equipment sales",
+      "Primarily an aftermarket parts and service business, not a manufacturer of new crushers, screens or conveyors, and not itself a quarry, mine or aggregate producer",
+      "Specific to crushing, screening and conveying equipment and their wear parts. Exclude general heavy-equipment or earth-moving equipment repair, dealers whose main business is selling new or used machines (crushers, screeners, loaders, excavators), and general industrial supply houses with no aggregates or mining focus",
+      "Based in the US or Canada",
+      "Independently owned. Exclude any company that is a subsidiary, division or brand of a larger group, including large aggregates and mining producers (for example Vulcan Materials, Martin Marietta, Heidelberg Materials, Cemex) and large equipment makers and parts groups (for example Sandvik, Metso, Weir, FLSmidth, Terex, Caterpillar), and companies backed by private equity",
+    ],
+  },
 };
 
 export type SearchType = "addon" | "platform";
@@ -153,6 +170,7 @@ export const SECTOR_ORDER = [
   "utility_services",
   "manufacturing",
   "b2b_services",
+  "unified_aftermarket",
 ] as const;
 
 export const PLATFORM_SECTOR_ORDER = [
@@ -250,11 +268,34 @@ function financialRequirementBlock(filters: SearchFilters): string[] {
   return lines;
 }
 
+/** Every focus area is searched twice per click, with different strategies, to widen coverage. */
+export const SEARCH_PASSES = [1, 2] as const;
+export type SearchPass = (typeof SEARCH_PASSES)[number];
+
+export function isSearchPass(v: unknown): v is SearchPass {
+  return v === 1 || v === 2;
+}
+
+function passStrategyBlock(mode: Mode, pass: SearchPass): string[] {
+  if (pass === 1) return [];
+  if (mode === "for_sale") {
+    return [
+      "",
+      "SEARCH STRATEGY FOR THIS PASS: a first pass has already covered the largest, best-known marketplaces. Do not stop at the first page of results. Look specifically in places that pass would have missed: niche and industry-specific business brokers, M&A advisor and investment-banker \"current opportunities\" pages, regional broker sites, trade-association and industry-publication classifieds, and smaller marketplaces. Open the individual listing pages and read them to confirm the details. Prefer listings that are current (still active, not expired or sold).",
+    ];
+  }
+  return [
+    "",
+    "SEARCH STRATEGY FOR THIS PASS: a first pass has already covered the most obvious, highest-ranking companies. Do not stop at the first page of search results or at the best-known names. Look specifically for smaller, regional and lesser-known operators by searching trade-association member directories, trade-show exhibitor lists, state and provincial industry directories, OEM and supplier dealer or distributor locators, industry-publication supplier guides, and local business listings. Open each candidate's own website to confirm what it actually does, where it is based, and who owns it before including it.",
+  ];
+}
+
 export function buildAgentRunSpec(
   searchType: SearchType,
   mode: Mode,
   sectorKey: string,
-  filters: SearchFilters = {}
+  filters: SearchFilters = {},
+  pass: SearchPass = 1
 ): AgentRunSpec {
   const base = BASE_SECTORS[sectorKey];
   if (!base) throw new Error(`Unknown sector: ${sectorKey}`);
@@ -273,6 +314,7 @@ export function buildAgentRunSpec(
       criteriaBlock(base.criteria),
       ...typeBlock,
       ...financialBlock,
+      ...passStrategyBlock("for_sale", pass),
       "",
       "Return each distinct business only once. For each, include the direct link to the for-sale listing itself (not just the company's own website) whenever one exists.",
     ].join("\n");
@@ -323,6 +365,7 @@ export function buildAgentRunSpec(
     criteriaBlock(base.criteria),
     ...typeBlock,
     ...financialBlock,
+    ...passStrategyBlock("proprietary", pass),
     "",
     "These are proprietary acquisition targets, not businesses currently marketed for sale — do not limit results to for-sale listings. Return each distinct company only once.",
   ].join("\n");

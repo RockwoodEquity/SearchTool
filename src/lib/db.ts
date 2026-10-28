@@ -84,6 +84,12 @@ export async function ensureSchema() {
   initialized = true;
 }
 
+const SQL_NORM_NAME = (col: string) =>
+  `NULLIF(regexp_replace(regexp_replace(lower(${col}), '\\m(inc|llc|ltd|limited|corp|corporation|co|company|lp|llp)\\M', '', 'g'), '[^a-z0-9]+', '', 'g'), '')`;
+
+const SQL_HOST = (col: string) =>
+  `NULLIF(regexp_replace(lower(trim(${col})), '^(https?://)?(www\\.)?([^/?#:]+).*$', '\\3'), '')`;
+
 /**
  * Dedupe key is intentionally just identity (mode + company name, or mode + website) —
  * not enrichment fields like pe_owned, which can vary run to run for the same company.
@@ -95,13 +101,15 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
   let inserted = 0;
   try {
     for (const row of rows) {
+      // Same company if the normalized name matches (ignores case, punctuation, Inc/LLC/Ltd-style
+      // suffixes) or the website hostname matches (ignores www, path and query).
       const dup = await client.query(
         `SELECT 1 FROM companies
          WHERE search_type = $4
            AND mode = $1
            AND (
-             lower(trim(company)) = lower(trim($2))
-             OR ($3::text IS NOT NULL AND lower(trim(website)) = lower(trim($3)))
+             ${SQL_NORM_NAME("company")} = ${SQL_NORM_NAME("$2")}
+             OR ($3::text IS NOT NULL AND ${SQL_HOST("website")} = ${SQL_HOST("$3")})
            )
          LIMIT 1`,
         [row.mode, row.company, row.website, row.search_type]
