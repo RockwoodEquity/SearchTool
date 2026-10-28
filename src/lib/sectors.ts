@@ -74,6 +74,7 @@ const BASE_SECTORS: Record<string, BaseSector> = {
       "Customers are aggregate, quarry, sand and gravel, mining or recycling operations, with repeat or consumable (replacement) revenue rather than one-time equipment sales",
       "Primarily an aftermarket parts and service business, not a manufacturer of new crushers, screens or conveyors, and not itself a quarry, mine or aggregate producer",
       "Specific to crushing, screening and conveying equipment and their wear parts. Exclude general heavy-equipment or earth-moving equipment repair, dealers whose main business is selling new or used machines (crushers, screeners, loaders, excavators), and general industrial supply houses with no aggregates or mining focus",
+      "Not Unified Screening & Crushing (Gilbert, Arizona). This search is run on behalf of that company to find add-ons for it, so exclude it and anything operating under its name",
       "Based in the US or Canada",
       "Independently owned. Exclude any company that is a subsidiary, division or brand of a larger group, including large aggregates and mining producers (for example Vulcan Materials, Martin Marietta, Heidelberg Materials, Cemex) and large equipment makers and parts groups (for example Sandvik, Metso, Weir, FLSmidth, Terex, Caterpillar), and companies backed by private equity",
     ],
