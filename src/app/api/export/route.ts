@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import { requireUser } from "@/lib/auth";
 import { queryCompanies } from "@/lib/db";
 import { isSearchType } from "@/lib/sectors";
 
@@ -22,6 +23,7 @@ const COLUMNS: { header: string; key: string; width?: number }[] = [
   { header: "Contact", key: "contact" },
   { header: "Already PE-owned?", key: "pe_owned" },
   { header: "Review", key: "review" },
+  { header: "Sourced by", key: "sourced_by" },
 ];
 
 const MODE_LABEL: Record<string, string> = {
@@ -30,20 +32,31 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const type = req.nextUrl.searchParams.get("type") ?? "addon";
+  const view = req.nextUrl.searchParams.get("view") ?? "mine";
   const start = req.nextUrl.searchParams.get("start") || undefined;
   const end = req.nextUrl.searchParams.get("end") || undefined;
 
   if (!isSearchType(type)) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
+  if (view !== "mine" && view !== "master") {
+    return NextResponse.json({ error: "Invalid view" }, { status: 400 });
+  }
 
   try {
-    // Passed rows are never exported.
-    const rows = await queryCompanies(type, start, end, { includePassed: false });
+    // Passed rows are never exported. "mine" is only the companies your searches found; "master" is everyone's.
+    const rows = await queryCompanies(type, start, end, {
+      includePassed: false,
+      ...(view === "mine" ? { ownerId: auth.user.id } : {}),
+    });
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet(type === "platform" ? "Platform Search Results" : "Add-On Search Results");
+    const kind = type === "platform" ? "Platform" : "Add-On";
+    const sheet = workbook.addWorksheet(view === "master" ? `${kind} Master Database` : `${kind} Search Results`);
 
     sheet.columns = COLUMNS.map((c) => ({ header: c.header, key: c.key }));
 
@@ -65,6 +78,7 @@ export async function GET(req: NextRequest) {
         contact: row.contact ?? "",
         pe_owned: row.mode === "proprietary" ? row.pe_owned ?? "" : "",
         review: row.status === "kept" ? "Kept" : "",
+        sourced_by: row.owner_name ?? "",
       });
     }
 
@@ -91,7 +105,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="rockwood-${type}-search.xlsx"`,
+        "Content-Disposition": `attachment; filename="rockwood-${type}-${view === "master" ? "master" : "search"}.xlsx"`,
       },
     });
   } catch (err) {

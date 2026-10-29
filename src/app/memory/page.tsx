@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch, type Me } from "@/lib/client";
 import type { MemoryView } from "@/lib/db";
 import { REASON_BY_CODE, RULE_THRESHOLD, type RuleStatus } from "@/lib/feedback";
 import type { SearchType } from "@/lib/sectors";
@@ -29,6 +30,14 @@ export default function MemoryPage() {
   const [tab, setTab] = useState<SearchType>("addon");
   const [memory, setMemory] = useState<{ type: SearchType; data: MemoryView } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+
+  useEffect(() => {
+    apiFetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setMe(d.user ?? null))
+      .catch(() => {});
+  }, []);
 
   const tabRef = useRef(tab);
   useEffect(() => {
@@ -36,7 +45,7 @@ export default function MemoryPage() {
   }, [tab]);
 
   const load = useCallback(async (type: SearchType) => {
-    const res = await fetch(`/api/memory?type=${type}`);
+    const res = await apiFetch(`/api/memory?type=${type}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? "Could not load memory");
     if (type === tabRef.current) {
@@ -60,7 +69,7 @@ export default function MemoryPage() {
   const data = memory?.type === tab ? memory.data : null;
 
   const toggleRule = async (r: RuleStatus) => {
-    const res = await fetch("/api/memory/rules", {
+    const res = await apiFetch("/api/memory/rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ searchType: tab, reason: r.code, enabled: !r.enabled }),
@@ -70,25 +79,12 @@ export default function MemoryPage() {
   };
 
   const restore = async (id: number) => {
-    const res = await fetch(`/api/companies/${id}`, {
+    const res = await apiFetch(`/api/companies/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "restore" }),
     });
     if (!res.ok) return window.alert((await res.json().catch(() => ({}))).error ?? "Could not restore");
-    await load(tab);
-  };
-
-  const forgetEverything = async () => {
-    const label = TABS.find((t) => t.type === tab)!.label;
-    if (
-      !window.confirm(
-        `Delete ALL ${label} results AND the passed-company memory? Passed companies could be suggested again. This cannot be undone.`
-      )
-    )
-      return;
-    const res = await fetch(`/api/companies?type=${tab}&scope=everything`, { method: "DELETE" });
-    if (!res.ok) return window.alert((await res.json().catch(() => ({}))).error ?? "Could not clear");
     await load(tab);
   };
 
@@ -213,6 +209,7 @@ export default function MemoryPage() {
                       <th>Focus area</th>
                       <th>Reasons</th>
                       <th>Note</th>
+                      <th>Sourced by</th>
                       <th>Passed</th>
                       <th />
                     </tr>
@@ -232,11 +229,14 @@ export default function MemoryPage() {
                         <td>{r.category}</td>
                         <td>{r.pass_reasons.map((c) => REASON_BY_CODE[c]?.label ?? c).join("; ") || "No reason given"}</td>
                         <td>{r.pass_note}</td>
+                        <td>{r.owner_name ?? ""}</td>
                         <td>{when(r.decided_at)}</td>
                         <td>
-                          <button className={styles.smallButton} onClick={() => restore(r.id)}>
-                            Restore
-                          </button>
+                          {me && r.owner_id === me.id && (
+                            <button className={styles.smallButton} onClick={() => restore(r.id)}>
+                              Restore
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -257,6 +257,7 @@ export default function MemoryPage() {
                     <tr>
                       <th>Company</th>
                       <th>Focus area</th>
+                      <th>Sourced by</th>
                       <th>Kept</th>
                       <th />
                     </tr>
@@ -274,11 +275,14 @@ export default function MemoryPage() {
                           )}
                         </td>
                         <td>{r.category}</td>
+                        <td>{r.owner_name ?? ""}</td>
                         <td>{when(r.decided_at)}</td>
                         <td>
-                          <button className={styles.smallButton} onClick={() => restore(r.id)}>
-                            Undo
-                          </button>
+                          {me && r.owner_id === me.id && (
+                            <button className={styles.smallButton} onClick={() => restore(r.id)}>
+                              Undo
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -288,16 +292,6 @@ export default function MemoryPage() {
             )}
           </section>
 
-          <section className={styles.dangerZone}>
-            <h2>Start over</h2>
-            <p className={styles.muted}>
-              Deletes every result in this tab and the passed-company memory, so passed companies could be suggested
-              again. The other tab is not affected.
-            </p>
-            <button className={styles.dangerButton} onClick={forgetEverything}>
-              Delete everything in this tab
-            </button>
-          </section>
         </>
       )}
     </div>

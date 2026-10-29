@@ -1,0 +1,141 @@
+.wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #f4f5f8;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1a1a;
+}
+
+.card {
+  width: 100%;
+  max-width: 400px;
+  padding: 30px 28px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e1e4ea;
+  box-shadow: 0 6px 24px rgba(20, 24, 36, 0.08);
+}
+
+.brand {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #2d5a8e;
+}
+
+.title {
+  margin: 0 0 6px;
+  font-size: 1.5rem;
+  color: #1a1a2e;
+}
+
+.sub {
+  margin: 0 0 20px;
+  font-size: 0.88rem;
+  color: #555;
+  line-height: 1.45;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.field input {
+  padding: 10px 11px;
+  border: 1px solid #c9ced6;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+.field input:focus {
+  outline: 2px solid #2d5a8e;
+  outline-offset: 0;
+  border-color: #2d5a8e;
+}
+
+.button {
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 7px;
+  background: #1a1a2e;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:disabled {
+  background: #9aa0aa;
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #fdf0ee;
+  border: 1px solid #efc4be;
+  color: #a32b1f;
+  font-size: 0.85rem;
+}
+
+.notice {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #eef8f1;
+  border: 1px solid #bfe3cb;
+  color: #1a6a35;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.warnNotice {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #fdf6e3;
+  border: 1px solid #ecd9a0;
+  color: #7a5a00;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.links {
+  margin-top: 16px;
+  font-size: 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.links a {
+  color: #2d5a8e;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.hint {
+  margin: -6px 0 14px;
+  font-size: 0.76rem;
+  color: #6b7280;
+}

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { getExaClient } from "@/lib/exa";
 import { insertCompanies, type CompanyInsert } from "@/lib/db";
 import { formatFilterLabel, isSearchType, sanitizeFilters, sectorLabel, type Mode } from "@/lib/sectors";
@@ -62,6 +63,9 @@ function sourceUrlForIndex(
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const { runId, searchType, mode, sectorKey, filters } = (await req.json()) as {
     runId: string;
     searchType: unknown;
@@ -124,6 +128,7 @@ export async function POST(req: NextRequest) {
           pe_owned: null,
           search_filters: searchFilters,
           search_type: searchType,
+          owner_id: auth.user.id,
         } satisfies CompanyInsert;
       }
 
@@ -148,6 +153,7 @@ export async function POST(req: NextRequest) {
         pe_owned: nullIfEmpty(c.pe_owned),
         search_filters: searchFilters,
         search_type: searchType,
+        owner_id: auth.user.id,
       } satisfies CompanyInsert;
     });
 

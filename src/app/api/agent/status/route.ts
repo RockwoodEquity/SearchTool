@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { getExaClient } from "@/lib/exa";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const runId = req.nextUrl.searchParams.get("id");
   if (!runId) {
     return NextResponse.json({ error: "Missing id" }, { status: 400 });

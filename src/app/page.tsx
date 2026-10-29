@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { apiFetch, type Me } from "@/lib/client";
 import { PASS_REASONS, REASON_BY_CODE, type ReviewAction, type ReviewStatus } from "@/lib/feedback";
 import {
   SEARCH_PASSES,
@@ -41,6 +42,8 @@ interface CompanyRow {
   status: ReviewStatus;
   pass_reasons: string[];
   pass_note: string | null;
+  owner_id: number | null;
+  owner_name: string | null;
 }
 
 interface FilterInputs {
@@ -167,7 +170,7 @@ function initialStatuses(): StatusMap {
 
 async function pollRunUntilDone(runId: string): Promise<void> {
   while (true) {
-    const res = await fetch(`/api/agent/status?id=${runId}`);
+    const res = await apiFetch(`/api/agent/status?id=${runId}`);
     if (!res.ok) throw new Error("Failed to poll agent run status");
     const data = await res.json();
     if (data.status === "completed") return;
@@ -182,6 +185,21 @@ interface ReviewHandlers {
   onKeep: (row: CompanyRow) => void;
   onPass: (row: CompanyRow) => void;
   onRestore: (row: CompanyRow) => void;
+}
+
+// Master Database: shows whether something was kept or passed, but decisions are made in the owner's own tab.
+function StatusCell({ row }: { row: CompanyRow }) {
+  if (row.status === "passed") {
+    const reasons = row.pass_reasons.map((c) => REASON_BY_CODE[c]?.label ?? c);
+    return (
+      <div className={styles.reviewCell}>
+        <span className={styles.passedTag}>Passed</span>
+        {reasons.length > 0 && <span className={styles.passedWhy}>{reasons.join("; ")}</span>}
+        {row.pass_note && <span className={styles.passedWhy}>&ldquo;{row.pass_note}&rdquo;</span>}
+      </div>
+    );
+  }
+  return <span className={row.status === "kept" ? styles.keptTag : styles.newTag}>{row.status === "kept" ? "Kept" : "Not reviewed"}</span>;
 }
 
 function ReviewCell({ row, onKeep, onPass, onRestore }: { row: CompanyRow } & ReviewHandlers) {
@@ -215,16 +233,26 @@ function ReviewCell({ row, onKeep, onPass, onRestore }: { row: CompanyRow } & Re
   );
 }
 
+const SOURCED_BY: ColumnDef = { header: "Sourced by", render: (r) => r.owner_name };
+
+// In the Master Database, show who found each company right after its name.
+function withOwner(columns: ColumnDef[]): ColumnDef[] {
+  const at = columns.findIndex((c) => c.header === "Company");
+  return at < 0 ? [SOURCED_BY, ...columns] : [...columns.slice(0, at + 1), SOURCED_BY, ...columns.slice(at + 1)];
+}
+
 function ResultsTable({
   title,
   rows,
   columns,
   handlers,
+  readOnly = false,
 }: {
   title: string;
   rows: CompanyRow[];
   columns: ColumnDef[];
   handlers: ReviewHandlers;
+  readOnly?: boolean;
 }) {
   const passedCount = rows.filter((r) => r.status === "passed").length;
   const activeCount = rows.length - passedCount;
@@ -254,7 +282,7 @@ function ResultsTable({
                 className={row.status === "passed" ? styles.rowPassed : row.status === "kept" ? styles.rowKept : undefined}
               >
                 <td className={styles.reviewTd}>
-                  <ReviewCell row={row} {...handlers} />
+                  {readOnly ? <StatusCell row={row} /> : <ReviewCell row={row} {...handlers} />}
                 </td>
                 {columns.map((c) => (
                   <td key={c.header} className={c.className ? styles[c.className] : undefined}>
@@ -266,7 +294,7 @@ function ResultsTable({
             {rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 1} className={styles.emptyRow}>
-                  No results yet. Run a search above.
+                  {readOnly ? "Nothing here yet." : "No results yet. Run a search above."}
                 </td>
               </tr>
             )}
@@ -345,14 +373,22 @@ function PassDialog({
   );
 }
 
+type RowsView = "mine" | "master";
+
+const OLD_ROW_DAYS = 14;
+
 export default function Home() {
   const [tab, setTab] = useState<SearchType>("addon");
+  // "mine" is your own tab; "master" is everyone's combined, read-only.
+  const [view, setView] = useState<RowsView>("mine");
+  const [me, setMe] = useState<Me | null>(null);
   const [passTarget, setPassTarget] = useState<CompanyRow | null>(null);
   const [hidePassed, setHidePassed] = useState(false);
+  const [hideOld, setHideOld] = useState(false);
   const [statuses, setStatuses] = useState<StatusMap>(initialStatuses);
   const [running, setRunning] = useState<{ searchType: SearchType; mode: Mode } | null>(null);
   const [resetting, setResetting] = useState(false);
-  const [rowsData, setRowsData] = useState<{ type: SearchType; rows: CompanyRow[] } | null>(null);
+  const [rowsData, setRowsData] = useState<{ type: SearchType; view: RowsView; rows: CompanyRow[] } | null>(null);
   const [loadingRows, setLoadingRows] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -361,20 +397,33 @@ export default function Home() {
     platform: EMPTY_FILTERS,
   });
 
+  const isMaster = view === "master";
+
+  useEffect(() => {
+    apiFetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setMe(d.user ?? null))
+      .catch(() => {});
+  }, []);
+
   const tabRef = useRef(tab);
+  const viewRef = useRef(view);
   useEffect(() => {
     tabRef.current = tab;
-  }, [tab]);
+    viewRef.current = view;
+  }, [tab, view]);
 
-  // Rows are tagged with their tab, and a late response for another tab is dropped.
+  // Rows are tagged with the tab and view they were loaded for, and a late response for another one is dropped.
   const fetchRows = useCallback(
-    async (type: SearchType) => {
-      const params = new URLSearchParams({ type });
+    async (type: SearchType, rowsView: RowsView) => {
+      const params = new URLSearchParams({ type, view: rowsView });
       if (startDate) params.set("start", startDate);
       if (endDate) params.set("end", endDate);
-      const res = await fetch(`/api/companies?${params.toString()}`);
+      const res = await apiFetch(`/api/companies?${params.toString()}`);
       const data = await res.json();
-      if (type === tabRef.current) setRowsData({ type, rows: data.rows ?? [] });
+      if (type === tabRef.current && rowsView === viewRef.current) {
+        setRowsData({ type, view: rowsView, rows: data.rows ?? [] });
+      }
     },
     [startDate, endDate]
   );
@@ -382,28 +431,31 @@ export default function Home() {
   const refresh = async () => {
     setLoadingRows(true);
     try {
-      await fetchRows(tab);
+      await fetchRows(tab, view);
     } finally {
       setLoadingRows(false);
     }
   };
 
   useEffect(() => {
-    fetchRows(tab);
-  }, [tab, fetchRows]);
+    fetchRows(tab, view);
+  }, [tab, view, fetchRows]);
 
-  // Live view: re-read the shared list every few seconds so one person's keep or pass shows up for everyone.
+  // Live view: re-read the list every few seconds so decisions and new finds show up without a reload.
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") fetchRows(tab).catch(() => {});
+      if (document.visibilityState === "visible") fetchRows(tab, view).catch(() => {});
     }, LIVE_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [tab, fetchRows]);
+  }, [tab, view, fetchRows]);
 
-  const rows = useMemo(() => (rowsData?.type === tab ? rowsData.rows : []), [rowsData, tab]);
+  const rows = useMemo(
+    () => (rowsData?.type === tab && rowsData.view === view ? rowsData.rows : []),
+    [rowsData, tab, view]
+  );
 
   const review = async (row: CompanyRow, action: ReviewAction, reasons: string[] = [], note = "") => {
-    const res = await fetch(`/api/companies/${row.id}`, {
+    const res = await apiFetch(`/api/companies/${row.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, reasons, note }),
@@ -412,7 +464,7 @@ export default function Home() {
       window.alert((await res.json().catch(() => ({}))).error ?? "Could not save that decision");
       return;
     }
-    await fetchRows(tab);
+    await fetchRows(tab, view);
   };
 
   const handlers: ReviewHandlers = {
@@ -464,24 +516,24 @@ export default function Home() {
 
     // One full create -> wait -> save cycle for a single pass of a single focus area.
     const runPass = async (sectorKey: string, pass: SearchPass) => {
-      const createRes = await fetch("/api/agent/create", {
+      const createRes = await apiFetch("/api/agent/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ searchType, mode, sectorKey, filters, pass }),
       });
-      if (!createRes.ok) throw new Error((await createRes.json()).error ?? "Create failed");
+      if (!createRes.ok) throw new Error((await createRes.json().catch(() => ({}))).error ?? "Create failed");
       const { runId } = await createRes.json();
 
       updateStatus(searchType, mode, sectorKey, { state: "running" });
       await pollRunUntilDone(runId);
 
-      const collectRes = await fetch("/api/agent/collect", {
+      const collectRes = await apiFetch("/api/agent/collect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId, searchType, mode, sectorKey, filters }),
       });
-      if (!collectRes.ok) throw new Error((await collectRes.json()).error ?? "Collect failed");
-      await fetchRows(searchType);
+      if (!collectRes.ok) throw new Error((await collectRes.json().catch(() => ({}))).error ?? "Collect failed");
+      await fetchRows(searchType, "mine");
     };
 
     await Promise.all(
@@ -512,16 +564,16 @@ export default function Home() {
   const resetTab = async () => {
     if (
       !window.confirm(
-        `Clear all ${tabLabel} results? Passed companies are kept as the firm's memory, so they will still never be suggested again. This cannot be undone. The other tab is not affected.`
+        `Clear YOUR ${tabLabel} results? Only companies your searches found are removed: the other person's list and the Master Database are not touched. Passed companies are kept as the firm's memory, so they will still never be suggested again. This cannot be undone.`
       )
     )
       return;
     setResetting(true);
     try {
-      const res = await fetch(`/api/companies?type=${tab}`, { method: "DELETE" });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Reset failed");
+      const res = await apiFetch(`/api/companies?type=${tab}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Reset failed");
       setStatuses((prev) => ({ ...prev, [tab]: idleStatuses(tab) }));
-      await fetchRows(tab);
+      await fetchRows(tab, "mine");
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Reset failed");
     } finally {
@@ -530,13 +582,21 @@ export default function Home() {
   };
 
   const exportHref = useMemo(() => {
-    const params = new URLSearchParams({ type: tab });
+    const params = new URLSearchParams({ type: tab, view });
     if (startDate) params.set("start", startDate);
     if (endDate) params.set("end", endDate);
     return `/api/export?${params.toString()}`;
-  }, [tab, startDate, endDate]);
+  }, [tab, view, startDate, endDate]);
 
-  const visibleRows = hidePassed ? rows.filter((r) => r.status !== "passed") : rows;
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.assign("/login");
+  };
+
+  // "Date sourced" is when the company was saved. Older than two weeks can be tucked away.
+  const [now] = useState(() => Date.now());
+  const isOld = (r: CompanyRow) => now - new Date(r.date_found).getTime() > OLD_ROW_DAYS * 86400000;
+  const visibleRows = rows.filter((r) => !(hidePassed && r.status === "passed") && !(hideOld && isOld(r)));
   const forSaleRows = visibleRows.filter((r) => r.mode === "for_sale");
   const proprietaryRows = visibleRows.filter((r) => r.mode === "proprietary");
   const passedTotal = rows.filter((r) => r.status === "passed").length;
@@ -548,9 +608,18 @@ export default function Home() {
     <div className={styles.page}>
       <header className={styles.headerRow}>
         <h1>Rockwood Search</h1>
-        <Link href="/memory" className={styles.memoryLink}>
-          Rules &amp; Memory
-        </Link>
+        <div className={styles.userBar}>
+          {me && <span className={styles.userName}>{me.name}</span>}
+          <Link href="/memory" className={styles.memoryLink}>
+            Rules &amp; Memory
+          </Link>
+          <Link href="/account" className={styles.plainLink}>
+            Account
+          </Link>
+          <button className={styles.plainLinkButton} onClick={logout}>
+            Log out
+          </button>
+        </div>
       </header>
 
       <nav className={styles.tabs} role="tablist">
@@ -558,16 +627,50 @@ export default function Home() {
           <button
             key={t.type}
             role="tab"
-            aria-selected={tab === t.type}
-            className={tab === t.type ? styles.tabActive : styles.tab}
-            onClick={() => setTab(t.type)}
+            aria-selected={!isMaster && tab === t.type}
+            className={!isMaster && tab === t.type ? styles.tabActive : styles.tab}
+            onClick={() => {
+              setTab(t.type);
+              setView("mine");
+            }}
           >
             {t.label}
           </button>
         ))}
+        <button
+          role="tab"
+          aria-selected={isMaster}
+          className={isMaster ? styles.tabActive : styles.tab}
+          onClick={() => setView("master")}
+        >
+          Master Database
+        </button>
       </nav>
-      <p className={styles.tabBlurb}>{TABS.find((t) => t.type === tab)!.blurb}</p>
 
+      {isMaster ? (
+        <>
+          <p className={styles.tabBlurb}>
+            Everything either of you has sourced, combined, with its review status. This view is read-only: decisions and
+            Reset happen in your own tabs, on companies your searches found.
+          </p>
+          <div className={styles.masterSwitch}>
+            {TABS.map((t) => (
+              <button
+                key={t.type}
+                className={tab === t.type ? styles.masterOptionOn : styles.masterOption}
+                onClick={() => setTab(t.type)}
+              >
+                {t.label.replace(" Search", "")}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className={styles.tabBlurb}>{TABS.find((t) => t.type === tab)!.blurb}</p>
+      )}
+
+      {!isMaster && (
+      <>
       <section className={styles.searchFilters}>
         <span className={styles.searchFiltersTitle}>
           Hard cutoffs for {tabLabel.toLowerCase()}es (leave blank for no limit)
@@ -629,6 +732,8 @@ export default function Home() {
           </div>
         ))}
       </section>
+      </>
+      )}
 
       <section className={styles.filterBar}>
         <label>
@@ -645,24 +750,37 @@ export default function Home() {
         <a className={styles.exportButton} href={exportHref}>
           Download Excel
         </a>
-        <button className={styles.resetButton} onClick={resetTab} disabled={resetting}>
-          {resetting ? "Resetting…" : `Reset ${tabLabel} Results`}
-        </button>
+        {!isMaster && (
+          <button className={styles.resetButton} onClick={resetTab} disabled={resetting}>
+            {resetting ? "Resetting…" : "Reset my results"}
+          </button>
+        )}
         <label className={styles.hideToggle}>
           <input type="checkbox" checked={hidePassed} onChange={(e) => setHidePassed(e.target.checked)} />
           Hide passed rows
+        </label>
+        <label className={styles.hideToggle}>
+          <input type="checkbox" checked={hideOld} onChange={(e) => setHideOld(e.target.checked)} />
+          Hide rows older than 2 weeks
         </label>
         <span className={styles.rowCount}>
           {rows.length - passedTotal} active &middot; {keptTotal} kept &middot; {passedTotal} passed
         </span>
       </section>
 
-      <ResultsTable title="For-Sale Listings" rows={forSaleRows} columns={FOR_SALE_COLUMNS} handlers={handlers} />
+      <ResultsTable
+        title="For-Sale Listings"
+        rows={forSaleRows}
+        columns={isMaster ? withOwner(FOR_SALE_COLUMNS) : FOR_SALE_COLUMNS}
+        handlers={handlers}
+        readOnly={isMaster}
+      />
       <ResultsTable
         title="Proprietary Targets"
         rows={proprietaryRows}
-        columns={PROPRIETARY_COLUMNS}
+        columns={isMaster ? withOwner(PROPRIETARY_COLUMNS) : PROPRIETARY_COLUMNS}
         handlers={handlers}
+        readOnly={isMaster}
       />
 
       {passTarget && (

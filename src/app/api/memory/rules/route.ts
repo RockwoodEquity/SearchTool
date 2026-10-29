@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { setRuleEnabled } from "@/lib/db";
 import { FIRM_REASONS } from "@/lib/feedback";
 import { isSearchType } from "@/lib/sectors";
@@ -7,6 +8,9 @@ export const runtime = "nodejs";
 
 // Switch a firm-wide rule on or off for one tab.
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const body = (await req.json().catch(() => null)) as {
     searchType?: unknown;
     reason?: unknown;

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import type { Mode, SearchType } from "./sectors";
 import {
@@ -35,6 +36,9 @@ export interface CompanyRow {
   pass_note: string | null;
   decided_by: string | null;
   decided_at: string | null;
+  /** The person whose search found this company. */
+  owner_id: number | null;
+  owner_name: string | null;
 }
 
 export interface CompanyInsert {
@@ -53,6 +57,15 @@ export interface CompanyInsert {
   contact: string | null;
   pe_owned: string | null;
   search_filters: string | null;
+  owner_id: number | null;
+}
+
+export interface UserRecord {
+  id: number;
+  email: string;
+  name: string;
+  password_hash: string;
+  password_version: number;
 }
 
 let pool: Pool | null = null;
@@ -112,9 +125,39 @@ export async function ensureSchema() {
       PRIMARY KEY (search_type, reason)
     )
   `);
-  // Keep the tables closed to Supabase's public web API; the app connects with the database role directly.
-  await q(`ALTER TABLE companies ENABLE ROW LEVEL SECURITY`);
-  await q(`ALTER TABLE learning_rules ENABLE ROW LEVEL SECURITY`);
+  await q(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_version INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_login_at TIMESTAMPTZ
+    )
+  `);
+  await q(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+  await q(`
+    CREATE TABLE IF NOT EXISTS password_resets (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ
+    )
+  `);
+  await q(`
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      email TEXT PRIMARY KEY,
+      failures INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // Keep every table closed to Supabase's public web API; the app connects with the database role directly.
+  for (const table of ["companies", "learning_rules", "users", "password_resets", "login_attempts"]) {
+    await q(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+  }
   initialized = true;
 }
 
@@ -129,8 +172,9 @@ const SQL_HOST = (col: string) =>
  * Inc/LLC/Ltd-style suffixes) or its website hostname matches (ignores www, path and query).
  * Only identity is compared, never enrichment fields like pe_owned, which can vary between runs.
  *
- * Passed companies are remembered across both modes: a company passed anywhere in the tab is never
- * saved again. Everything else is only de-duplicated within its own mode.
+ * De-duplication is global within a tab: across both people, both modes and every focus area, so
+ * each company appears exactly once, owned by whoever found it first. Passed companies stay in the
+ * table as memory, so they are covered by the same check.
  */
 export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
   if (rows.length === 0) return 0;
@@ -141,14 +185,13 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
     for (const row of rows) {
       const dup = await client.query(
         `SELECT 1 FROM companies
-         WHERE search_type = $4
-           AND (mode = $1 OR status = 'passed')
+         WHERE search_type = $3
            AND (
-             ${SQL_NORM_NAME("company")} = ${SQL_NORM_NAME("$2")}
-             OR ($3::text IS NOT NULL AND ${SQL_HOST("website")} = ${SQL_HOST("$3")})
+             ${SQL_NORM_NAME("company")} = ${SQL_NORM_NAME("$1")}
+             OR ($2::text IS NOT NULL AND ${SQL_HOST("website")} = ${SQL_HOST("$2")})
            )
          LIMIT 1`,
-        [row.mode, row.company, row.website, row.search_type]
+        [row.company, row.website, row.search_type]
       );
       if ((dup.rowCount ?? 0) > 0) continue;
 
@@ -156,8 +199,8 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
         `INSERT INTO companies (
           mode, category, company, website, link_to_listing, location,
           employees, revenue_or_price, why_fits, broker_source, listing_date,
-          contact, pe_owned, search_filters, search_type
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+          contact, pe_owned, search_filters, search_type, owner_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           row.mode,
           row.category,
@@ -174,6 +217,7 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
           row.pe_owned,
           row.search_filters,
           row.search_type,
+          row.owner_id,
         ]
       );
       inserted++;
@@ -185,18 +229,15 @@ export async function insertCompanies(rows: CompanyInsert[]): Promise<number> {
 }
 
 /**
- * Clears a tab's results. Passed companies are the firm's memory, so they are kept unless
- * `forgetPassed` is set. Resetting one tab never touches the other.
+ * Clears one person's results in a tab. Passed companies are the firm's memory and are kept, and
+ * the other person's companies are never touched.
  */
-export async function deleteCompaniesOfType(
-  searchType: SearchType,
-  options: { forgetPassed?: boolean } = {}
-): Promise<number> {
+export async function deleteOwnCompanies(searchType: SearchType, ownerId: number): Promise<number> {
   await ensureSchema();
-  const sql = options.forgetPassed
-    ? `DELETE FROM companies WHERE search_type = $1`
-    : `DELETE FROM companies WHERE search_type = $1 AND status <> 'passed'`;
-  const res = await getPool().query(sql, [searchType]);
+  const res = await getPool().query(
+    `DELETE FROM companies WHERE search_type = $1 AND owner_id = $2 AND status <> 'passed'`,
+    [searchType, ownerId]
+  );
   return res.rowCount ?? 0;
 }
 
@@ -204,26 +245,33 @@ export async function queryCompanies(
   searchType: SearchType,
   start?: string,
   end?: string,
-  options: { includePassed?: boolean } = {}
+  options: { includePassed?: boolean; ownerId?: number } = {}
 ): Promise<CompanyRow[]> {
   await ensureSchema();
-  const { includePassed = true } = options;
+  const { includePassed = true, ownerId } = options;
 
-  const conditions: string[] = [`search_type = $1`];
-  const params: string[] = [searchType];
+  const conditions: string[] = [`c.search_type = $1`];
+  const params: (string | number)[] = [searchType];
 
-  if (!includePassed) conditions.push(`status <> 'passed'`);
+  if (ownerId !== undefined) {
+    params.push(ownerId);
+    conditions.push(`c.owner_id = $${params.length}`);
+  }
+  if (!includePassed) conditions.push(`c.status <> 'passed'`);
   if (start) {
     params.push(start);
-    conditions.push(`COALESCE(listing_date, date_found::date) >= $${params.length}::date`);
+    conditions.push(`COALESCE(c.listing_date, c.date_found::date) >= $${params.length}::date`);
   }
   if (end) {
     params.push(end);
-    conditions.push(`COALESCE(listing_date, date_found::date) <= $${params.length}::date`);
+    conditions.push(`COALESCE(c.listing_date, c.date_found::date) <= $${params.length}::date`);
   }
 
   const { rows } = await getPool().query<CompanyRow>(
-    `SELECT * FROM companies WHERE ${conditions.join(" AND ")} ORDER BY date_found DESC`,
+    `SELECT c.*, u.name AS owner_name
+       FROM companies c LEFT JOIN users u ON u.id = c.owner_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY c.date_found DESC`,
     params
   );
   return rows;
@@ -237,38 +285,46 @@ export interface ReviewInput {
   action: ReviewAction;
   reasons?: string[];
   note?: string | null;
-  decidedBy?: string | null;
 }
 
+export type ReviewResult = { ok: true } | { ok: false; reason: "not_found" | "forbidden" };
+
 /**
- * Applies a decision to one row. Passing and restoring also apply to every other row in the same tab
- * that is the same company (any mode), so "passed" is a fact about the company, not about one listing.
- * Keeping only affects the row itself.
+ * Applies a decision to one row, and only if the actor sourced it. Passing and restoring also apply to
+ * any other row of the same company that the same person owns. Keeping only affects the row itself.
  */
-export async function reviewCompany(id: number, input: ReviewInput): Promise<CompanyRow | null> {
+export async function reviewCompany(
+  id: number,
+  actor: { id: number; email: string },
+  input: ReviewInput
+): Promise<ReviewResult> {
   await ensureSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
 
+    const existing = await client.query<{ owner_id: number | null }>(`SELECT owner_id FROM companies WHERE id = $1 FOR UPDATE`, [id]);
+    if (existing.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "not_found" };
+    }
+    if (existing.rows[0].owner_id !== actor.id) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "forbidden" };
+    }
+
     const status: ReviewStatus = input.action === "keep" ? "kept" : input.action === "pass" ? "passed" : "new";
     const reasons = input.action === "pass" ? (input.reasons ?? []).filter((r) => r in REASON_BY_CODE) : [];
     const note = input.action === "pass" ? (input.note?.trim() || null) : null;
     const decidedAt = input.action === "restore" ? null : new Date().toISOString();
-    const decidedBy = input.action === "restore" ? null : (input.decidedBy ?? null);
+    const decidedBy = input.action === "restore" ? null : actor.email;
 
-    const self = await client.query<CompanyRow>(
+    await client.query(
       `UPDATE companies
          SET status = $2, pass_reasons = $3, pass_note = $4, decided_by = $5, decided_at = $6
-       WHERE id = $1
-       RETURNING *`,
+       WHERE id = $1`,
       [id, status, reasons, note, decidedBy, decidedAt]
     );
-    const updated = self.rows[0];
-    if (!updated) {
-      await client.query("ROLLBACK");
-      return null;
-    }
 
     if (input.action === "pass" || input.action === "restore") {
       await client.query(
@@ -278,6 +334,7 @@ export async function reviewCompany(id: number, input: ReviewInput): Promise<Com
          WHERE me.id = $1
            AND c.id <> me.id
            AND c.search_type = me.search_type
+           AND c.owner_id = me.owner_id
            AND (
              (${SQL_NORM_NAME("c.company")} IS NOT NULL AND ${SQL_NORM_NAME("c.company")} = ${SQL_NORM_NAME("me.company")})
              OR (${SQL_HOST("c.website")} IS NOT NULL AND ${SQL_HOST("c.website")} = ${SQL_HOST("me.website")})
@@ -288,7 +345,7 @@ export async function reviewCompany(id: number, input: ReviewInput): Promise<Com
     }
 
     await client.query("COMMIT");
-    return updated;
+    return { ok: true };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -298,7 +355,7 @@ export async function reviewCompany(id: number, input: ReviewInput): Promise<Com
 }
 
 // ---------------------------------------------------------------------------------------------
-// Memory: rules, exclusions and examples that feed back into searches
+// Memory: rules, exclusions and examples that feed back into searches (shared by everyone)
 // ---------------------------------------------------------------------------------------------
 
 /** Firm-wide reasons, how often each has been used, and whether each is currently an active rule. */
@@ -344,7 +401,7 @@ export async function setRuleEnabled(searchType: SearchType, reason: string, ena
   );
 }
 
-const MAX_EXCLUSIONS = 200;
+const MAX_EXCLUSIONS = 400;
 const MAX_EXAMPLES = 20;
 
 function normalizeName(name: string): string {
@@ -354,13 +411,16 @@ function normalizeName(name: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-/** Passed companies in the tab (any mode), most recent first, one entry per company, capped. */
+/**
+ * Every company already in the tab, from both people. Passed companies come first, since they matter
+ * most, then everything else newest first; one entry per company, capped.
+ */
 export async function getExclusions(searchType: SearchType): Promise<Exclusion[]> {
   await ensureSchema();
   const { rows } = await getPool().query<{ company: string; website: string | null }>(
     `SELECT company, website FROM companies
-     WHERE search_type = $1 AND status = 'passed'
-     ORDER BY decided_at DESC NULLS LAST, id DESC`,
+     WHERE search_type = $1
+     ORDER BY (status = 'passed') DESC, COALESCE(decided_at, date_found) DESC, id DESC`,
     [searchType]
   );
   const seen = new Set<string>();
@@ -423,9 +483,10 @@ export async function getMemory(searchType: SearchType): Promise<MemoryView> {
   await ensureSchema();
   const rules = await getRuleStatuses(searchType);
   const decided = await getPool().query<CompanyRow>(
-    `SELECT * FROM companies
-     WHERE search_type = $1 AND status IN ('kept', 'passed')
-     ORDER BY decided_at DESC NULLS LAST, id DESC`,
+    `SELECT c.*, u.name AS owner_name
+       FROM companies c LEFT JOIN users u ON u.id = c.owner_id
+      WHERE c.search_type = $1 AND c.status IN ('kept', 'passed')
+      ORDER BY c.decided_at DESC NULLS LAST, c.id DESC`,
     [searchType]
   );
 
@@ -451,4 +512,123 @@ export async function getMemory(searchType: SearchType): Promise<MemoryView> {
   }
 
   return { rules, passed, kept, focusAreas: [...byFocus.values()].sort((a, b) => a.category.localeCompare(b.category)) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Accounts, sessions support, password reset, login throttling
+// ---------------------------------------------------------------------------------------------
+
+export const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+const USER_COLUMNS = `id, email, name, password_hash, password_version`;
+
+export async function getUserByEmail(email: string): Promise<UserRecord | null> {
+  await ensureSchema();
+  const { rows } = await getPool().query<UserRecord>(`SELECT ${USER_COLUMNS} FROM users WHERE email = $1`, [normalizeEmail(email)]);
+  return rows[0] ?? null;
+}
+
+export async function getUserById(id: number): Promise<UserRecord | null> {
+  await ensureSchema();
+  const { rows } = await getPool().query<UserRecord>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
+export async function createUser(email: string, name: string, passwordHash: string): Promise<UserRecord> {
+  await ensureSchema();
+  const { rows } = await getPool().query<UserRecord>(
+    `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING ${USER_COLUMNS}`,
+    [normalizeEmail(email), name.trim(), passwordHash]
+  );
+  return rows[0];
+}
+
+/** Sets a new password, bumps the version so every older session stops working, and voids pending reset links. */
+export async function setUserPassword(userId: number, passwordHash: string): Promise<UserRecord> {
+  await ensureSchema();
+  const { rows } = await getPool().query<UserRecord>(
+    `UPDATE users SET password_hash = $2, password_version = password_version + 1 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
+    [userId, passwordHash]
+  );
+  await getPool().query(`UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+  await getPool().query(`DELETE FROM login_attempts WHERE email = $1`, [rows[0]?.email ?? ""]);
+  return rows[0];
+}
+
+export async function touchLastLogin(userId: number): Promise<void> {
+  await getPool().query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [userId]);
+}
+
+const MAX_FAILURES = 5;
+const LOCK_MINUTES = 15;
+
+/** Minutes left on a lockout, or 0. */
+export async function lockoutMinutesLeft(email: string): Promise<number> {
+  await ensureSchema();
+  const { rows } = await getPool().query<{ left: number | null }>(
+    `SELECT CEIL(EXTRACT(EPOCH FROM (locked_until - NOW())) / 60)::int AS left FROM login_attempts WHERE email = $1 AND locked_until > NOW()`,
+    [normalizeEmail(email)]
+  );
+  return rows[0]?.left ?? 0;
+}
+
+export async function recordLoginFailure(email: string): Promise<void> {
+  await ensureSchema();
+  await getPool().query(
+    `INSERT INTO login_attempts (email, failures) VALUES ($1, 1)
+     ON CONFLICT (email) DO UPDATE SET
+       failures = CASE WHEN login_attempts.locked_until IS NOT NULL AND login_attempts.locked_until <= NOW() THEN 1 ELSE login_attempts.failures + 1 END,
+       locked_until = CASE
+         WHEN (CASE WHEN login_attempts.locked_until IS NOT NULL AND login_attempts.locked_until <= NOW() THEN 1 ELSE login_attempts.failures + 1 END) >= ${MAX_FAILURES}
+           THEN NOW() + INTERVAL '${LOCK_MINUTES} minutes'
+         ELSE NULL END,
+       updated_at = NOW()`,
+    [normalizeEmail(email)]
+  );
+}
+
+export async function clearLoginFailures(email: string): Promise<void> {
+  await getPool().query(`DELETE FROM login_attempts WHERE email = $1`, [normalizeEmail(email)]);
+}
+
+const RESET_HOURS = 1;
+const MAX_RESETS_PER_HOUR = 3;
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** Creates a single-use reset link token (valid one hour). Returns null if too many were requested recently. */
+export async function createResetToken(userId: number): Promise<string | null> {
+  await ensureSchema();
+  const recent = await getPool().query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+    [userId]
+  );
+  if (recent.rows[0].n >= MAX_RESETS_PER_HOUR) return null;
+  const token = randomBytes(32).toString("base64url");
+  await getPool().query(
+    `INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '${RESET_HOURS} hour')`,
+    [sha256(token), userId]
+  );
+  return token;
+}
+
+/** The user a valid, unused, unexpired token belongs to, without using it up. */
+export async function findResetUser(token: string): Promise<UserRecord | null> {
+  await ensureSchema();
+  const { rows } = await getPool().query<UserRecord>(
+    `SELECT u.id, u.email, u.name, u.password_hash, u.password_version
+       FROM password_resets r JOIN users u ON u.id = r.user_id
+      WHERE r.token_hash = $1 AND r.used_at IS NULL AND r.expires_at > NOW()`,
+    [sha256(token)]
+  );
+  return rows[0] ?? null;
+}
+
+/** Marks a token used. Returns false if it was already used or expired, so a link works exactly once. */
+export async function consumeResetToken(token: string): Promise<boolean> {
+  await ensureSchema();
+  const res = await getPool().query(
+    `UPDATE password_resets SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`,
+    [sha256(token)]
+  );
+  return (res.rowCount ?? 0) > 0;
 }

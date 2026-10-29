@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
+import { requireUser } from "@/lib/auth";
 import { getExclusions, getLearning } from "@/lib/db";
 import type { Exclusion, Learning } from "@/lib/feedback";
 import {
@@ -19,6 +20,9 @@ export const maxDuration = 60;
 const EFFORT = "medium";
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const { searchType, mode, sectorKey, filters, pass = 1 } = (await req.json()) as {
     searchType: unknown;
     mode: Mode;

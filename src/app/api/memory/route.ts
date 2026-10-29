@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import { getMemory } from "@/lib/db";
 import { isSearchType } from "@/lib/sectors";
 
 export const runtime = "nodejs";
 
-// Everything the Rules & Memory page shows for one tab: rules, passed and kept companies.
+// Everything the Rules & Memory page shows for one tab: rules, passed and kept companies. Shared by everyone.
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if ("error" in auth) return auth.error;
+
   const type = req.nextUrl.searchParams.get("type") ?? "addon";
   if (!isSearchType(type)) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });

@@ -542,3 +542,78 @@
   background: #c0392b;
   color: #fff;
 }
+
+/* ---- Accounts, Master Database, header ---- */
+.userBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.userName {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.plainLink,
+.plainLinkButton {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #2d5a8e;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.plainLink:hover,
+.plainLinkButton:hover {
+  text-decoration: underline;
+}
+
+.masterSwitch {
+  display: inline-flex;
+  margin: 0 0 14px;
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.masterOption,
+.masterOptionOn {
+  padding: 7px 18px;
+  border: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  color: #555;
+}
+
+.masterOptionOn {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.keptTag,
+.newTag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.keptTag {
+  background: #e3f4ea;
+  color: #1a7a3c;
+}
+
+.newTag {
+  background: #eceef1;
+  color: #6b7280;
+}
