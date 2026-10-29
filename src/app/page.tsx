@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { PASS_REASONS, REASON_BY_CODE, type ReviewAction, type ReviewStatus } from "@/lib/feedback";
 import {
   SEARCH_PASSES,
   sectorLabel,
@@ -36,6 +38,9 @@ interface CompanyRow {
   pe_owned: string | null;
   search_filters: string | null;
   date_found: string;
+  status: ReviewStatus;
+  pass_reasons: string[];
+  pass_note: string | null;
 }
 
 interface FilterInputs {
@@ -173,16 +178,70 @@ async function pollRunUntilDone(runId: string): Promise<void> {
   }
 }
 
-function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRow[]; columns: ColumnDef[] }) {
+interface ReviewHandlers {
+  onKeep: (row: CompanyRow) => void;
+  onPass: (row: CompanyRow) => void;
+  onRestore: (row: CompanyRow) => void;
+}
+
+function ReviewCell({ row, onKeep, onPass, onRestore }: { row: CompanyRow } & ReviewHandlers) {
+  if (row.status === "passed") {
+    const reasons = row.pass_reasons.map((c) => REASON_BY_CODE[c]?.label ?? c);
+    return (
+      <div className={styles.reviewCell}>
+        <span className={styles.passedTag}>Passed</span>
+        {reasons.length > 0 && <span className={styles.passedWhy}>{reasons.join("; ")}</span>}
+        {row.pass_note && <span className={styles.passedWhy}>&ldquo;{row.pass_note}&rdquo;</span>}
+        <button className={styles.restoreButton} onClick={() => onRestore(row)}>
+          Restore
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.reviewCell}>
+      <button
+        className={row.status === "kept" ? styles.keepButtonOn : styles.keepButton}
+        title={row.status === "kept" ? "Kept. Click to undo" : "Keep: this is a good fit"}
+        aria-pressed={row.status === "kept"}
+        onClick={() => (row.status === "kept" ? onRestore(row) : onKeep(row))}
+      >
+        &#10003;
+      </button>
+      <button className={styles.passButton} title="Pass: remove this from the list" onClick={() => onPass(row)}>
+        &#10005;
+      </button>
+    </div>
+  );
+}
+
+function ResultsTable({
+  title,
+  rows,
+  columns,
+  handlers,
+}: {
+  title: string;
+  rows: CompanyRow[];
+  columns: ColumnDef[];
+  handlers: ReviewHandlers;
+}) {
+  const passedCount = rows.filter((r) => r.status === "passed").length;
+  const activeCount = rows.length - passedCount;
   return (
     <div className={styles.tableBlock}>
       <h2 className={styles.tableTitle}>
-        {title} <span className={styles.rowCount}>({rows.length})</span>
+        {title}{" "}
+        <span className={styles.rowCount}>
+          ({activeCount}
+          {passedCount > 0 ? `, ${passedCount} passed` : ""})
+        </span>
       </h2>
       <div className={styles.tableWrap}>
         <table className={styles.table}>
           <thead>
             <tr>
+              <th className={styles.reviewHead}>Review</th>
               {columns.map((c) => (
                 <th key={c.header}>{c.header}</th>
               ))}
@@ -190,7 +249,13 @@ function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRo
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id}>
+              <tr
+                key={row.id}
+                className={row.status === "passed" ? styles.rowPassed : row.status === "kept" ? styles.rowKept : undefined}
+              >
+                <td className={styles.reviewTd}>
+                  <ReviewCell row={row} {...handlers} />
+                </td>
                 {columns.map((c) => (
                   <td key={c.header} className={c.className ? styles[c.className] : undefined}>
                     {c.render(row)}
@@ -200,7 +265,7 @@ function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRo
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className={styles.emptyRow}>
+                <td colSpan={columns.length + 1} className={styles.emptyRow}>
                   No results yet. Run a search above.
                 </td>
               </tr>
@@ -212,8 +277,78 @@ function ResultsTable({ title, rows, columns }: { title: string; rows: CompanyRo
   );
 }
 
+const LIVE_REFRESH_MS = 12000;
+
+function PassDialog({
+  row,
+  onCancel,
+  onConfirm,
+}: {
+  row: CompanyRow;
+  onCancel: () => void;
+  onConfirm: (reasons: string[], note: string) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [note, setNote] = useState("");
+  const toggle = (code: string) =>
+    setSelected((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
+
+  const group = (scope: "firm" | "focus" | "data", heading: string, hint: string) => (
+    <div className={styles.reasonGroup}>
+      <div className={styles.reasonHeading}>
+        {heading} <span className={styles.reasonHint}>{hint}</span>
+      </div>
+      <div className={styles.chips}>
+        {PASS_REASONS.filter((r) => r.scope === scope).map((r) => (
+          <button
+            key={r.code}
+            type="button"
+            className={selected.includes(r.code) ? styles.chipOn : styles.chip}
+            aria-pressed={selected.includes(r.code)}
+            onClick={() => toggle(r.code)}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={styles.overlay} role="dialog" aria-modal="true" onClick={onCancel}>
+      <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
+        <h3 className={styles.dialogTitle}>Pass on {row.company}?</h3>
+        <p className={styles.dialogSub}>
+          It will be greyed out, left out of the Excel export, and never suggested again. Reasons are optional, but they
+          teach future searches.
+        </p>
+        {group("firm", "Firm-wide", "teaches every search in this tab")}
+        {group("focus", "This focus area only", "")}
+        {group("data", "Data problem", "")}
+        <textarea
+          className={styles.noteBox}
+          placeholder="Optional note"
+          maxLength={500}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <div className={styles.dialogButtons}>
+          <button className={styles.dialogCancel} onClick={onCancel}>
+            Cancel
+          </button>
+          <button className={styles.dialogPass} onClick={() => onConfirm(selected, note)}>
+            Pass
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [tab, setTab] = useState<SearchType>("addon");
+  const [passTarget, setPassTarget] = useState<CompanyRow | null>(null);
+  const [hidePassed, setHidePassed] = useState(false);
   const [statuses, setStatuses] = useState<StatusMap>(initialStatuses);
   const [running, setRunning] = useState<{ searchType: SearchType; mode: Mode } | null>(null);
   const [resetting, setResetting] = useState(false);
@@ -257,7 +392,34 @@ export default function Home() {
     fetchRows(tab);
   }, [tab, fetchRows]);
 
+  // Live view: re-read the shared list every few seconds so one person's keep or pass shows up for everyone.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") fetchRows(tab).catch(() => {});
+    }, LIVE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [tab, fetchRows]);
+
   const rows = useMemo(() => (rowsData?.type === tab ? rowsData.rows : []), [rowsData, tab]);
+
+  const review = async (row: CompanyRow, action: ReviewAction, reasons: string[] = [], note = "") => {
+    const res = await fetch(`/api/companies/${row.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, reasons, note }),
+    });
+    if (!res.ok) {
+      window.alert((await res.json().catch(() => ({}))).error ?? "Could not save that decision");
+      return;
+    }
+    await fetchRows(tab);
+  };
+
+  const handlers: ReviewHandlers = {
+    onKeep: (row) => review(row, "keep"),
+    onPass: (row) => setPassTarget(row),
+    onRestore: (row) => review(row, "restore"),
+  };
 
   const updateStatus = (searchType: SearchType, mode: Mode, sectorKey: string, patch: Partial<CategoryStatus>) => {
     setStatuses((prev) => ({
@@ -348,7 +510,12 @@ export default function Home() {
   const tabLabel = TABS.find((t) => t.type === tab)!.label;
 
   const resetTab = async () => {
-    if (!window.confirm(`Delete all saved ${tabLabel} results? This cannot be undone. The other tab is not affected.`)) return;
+    if (
+      !window.confirm(
+        `Clear all ${tabLabel} results? Passed companies are kept as the firm's memory, so they will still never be suggested again. This cannot be undone. The other tab is not affected.`
+      )
+    )
+      return;
     setResetting(true);
     try {
       const res = await fetch(`/api/companies?type=${tab}`, { method: "DELETE" });
@@ -369,15 +536,21 @@ export default function Home() {
     return `/api/export?${params.toString()}`;
   }, [tab, startDate, endDate]);
 
-  const forSaleRows = rows.filter((r) => r.mode === "for_sale");
-  const proprietaryRows = rows.filter((r) => r.mode === "proprietary");
+  const visibleRows = hidePassed ? rows.filter((r) => r.status !== "passed") : rows;
+  const forSaleRows = visibleRows.filter((r) => r.mode === "for_sale");
+  const proprietaryRows = visibleRows.filter((r) => r.mode === "proprietary");
+  const passedTotal = rows.filter((r) => r.status === "passed").length;
+  const keptTotal = rows.filter((r) => r.status === "kept").length;
   const sectors = sectorsFor(tab);
   const busy = running !== null;
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
+      <header className={styles.headerRow}>
         <h1>Rockwood Search</h1>
+        <Link href="/memory" className={styles.memoryLink}>
+          Rules &amp; Memory
+        </Link>
       </header>
 
       <nav className={styles.tabs} role="tablist">
@@ -475,11 +648,34 @@ export default function Home() {
         <button className={styles.resetButton} onClick={resetTab} disabled={resetting}>
           {resetting ? "Resetting…" : `Reset ${tabLabel} Results`}
         </button>
-        <span className={styles.rowCount}>{rows.length} total rows</span>
+        <label className={styles.hideToggle}>
+          <input type="checkbox" checked={hidePassed} onChange={(e) => setHidePassed(e.target.checked)} />
+          Hide passed rows
+        </label>
+        <span className={styles.rowCount}>
+          {rows.length - passedTotal} active &middot; {keptTotal} kept &middot; {passedTotal} passed
+        </span>
       </section>
 
-      <ResultsTable title="For-Sale Listings" rows={forSaleRows} columns={FOR_SALE_COLUMNS} />
-      <ResultsTable title="Proprietary Targets" rows={proprietaryRows} columns={PROPRIETARY_COLUMNS} />
+      <ResultsTable title="For-Sale Listings" rows={forSaleRows} columns={FOR_SALE_COLUMNS} handlers={handlers} />
+      <ResultsTable
+        title="Proprietary Targets"
+        rows={proprietaryRows}
+        columns={PROPRIETARY_COLUMNS}
+        handlers={handlers}
+      />
+
+      {passTarget && (
+        <PassDialog
+          row={passTarget}
+          onCancel={() => setPassTarget(null)}
+          onConfirm={async (reasons, note) => {
+            const target = passTarget;
+            setPassTarget(null);
+            await review(target, "pass", reasons, note);
+          }}
+        />
+      )}
     </div>
   );
 }

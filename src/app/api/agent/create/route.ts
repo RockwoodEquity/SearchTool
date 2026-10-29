@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
+import { getExclusions, getLearning } from "@/lib/db";
+import type { Exclusion, Learning } from "@/lib/feedback";
 import {
   buildAgentRunSpec,
   isSearchPass,
   isSearchType,
   sanitizeFilters,
+  sectorLabel,
   sectorsFor,
   type Mode,
 } from "@/lib/sectors";
@@ -40,12 +43,34 @@ export async function POST(req: NextRequest) {
 
   try {
     const exa = getExaClient();
-    const { query, outputSchema } = buildAgentRunSpec(searchType, mode, sectorKey, sanitizeFilters(filters), pass);
+
+    // The team's review history. If the database can't be read, the search still runs: passed
+    // companies are also blocked at save time, so they can never come back into the table.
+    let learning: Learning | undefined;
+    let exclusion: Exclusion[] = [];
+    try {
+      [learning, exclusion] = await Promise.all([
+        getLearning(searchType, sectorLabel(sectorKey)),
+        getExclusions(searchType),
+      ]);
+    } catch (err) {
+      console.error("Could not load review memory; searching without it:", err);
+    }
+
+    const { query, outputSchema } = buildAgentRunSpec(
+      searchType,
+      mode,
+      sectorKey,
+      sanitizeFilters(filters),
+      pass,
+      learning
+    );
 
     const run = await exa.agent.runs.create({
       query,
       outputSchema,
       effort: EFFORT,
+      ...(exclusion.length > 0 ? { input: { exclusion: exclusion.map((e) => ({ ...e })) } } : {}),
     });
 
     return NextResponse.json({ runId: run.id, status: run.status });

@@ -25,15 +25,17 @@ export async function GET(req: NextRequest) {
 }
 
 // The type is required (no default) so a bare DELETE can never wipe anything.
+// Reset keeps passed companies (the firm's memory). Only scope=everything also forgets them.
 export async function DELETE(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type");
   if (!isSearchType(type)) {
     return NextResponse.json({ error: "A valid type (addon or platform) is required" }, { status: 400 });
   }
+  const forgetPassed = req.nextUrl.searchParams.get("scope") === "everything";
 
   try {
-    await deleteCompaniesOfType(type);
-    return NextResponse.json({ ok: true });
+    const removed = await deleteCompaniesOfType(type, { forgetPassed });
+    return NextResponse.json({ ok: true, removed });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to reset companies" },

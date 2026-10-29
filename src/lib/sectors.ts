@@ -1,3 +1,5 @@
+import type { Learning, LearningExample } from "./feedback";
+
 export type Mode = "for_sale" | "proprietary";
 
 interface BaseSector {
@@ -291,12 +293,48 @@ function passStrategyBlock(mode: Mode, pass: SearchPass): string[] {
   ];
 }
 
+function exampleLine(e: LearningExample): string {
+  const site = e.website ? ` (${e.website})` : "";
+  const reasons = e.reasons.length > 0 ? ` Passed because: ${e.reasons.join("; ")}.` : "";
+  const why = e.why ? ` ${e.why}` : "";
+  return `- ${e.company}${site}.${reasons}${why}`.replace(/\s+/g, " ").trim();
+}
+
+/** What the team's keep / pass history adds to a search: tab-wide rules plus this focus area's examples. */
+function learningBlock(learning?: Learning): string[] {
+  if (!learning) return [];
+  const lines: string[] = [];
+  if (learning.rules.length > 0) {
+    lines.push(
+      "",
+      "FIRM-WIDE PREFERENCES learned from the team's past reviews of results. Apply these strictly:",
+      ...learning.rules.map((r) => `- ${r}`)
+    );
+  }
+  if (learning.liked.length > 0) {
+    lines.push(
+      "",
+      "COMPANIES THE TEAM KEPT: examples of good fits for this focus area. Find more companies like these, but do not return these exact companies again:",
+      ...learning.liked.map(exampleLine)
+    );
+  }
+  if (learning.passed.length > 0) {
+    lines.push(
+      "",
+      "COMPANIES THE TEAM PASSED ON: examples of bad fits for this focus area. Avoid companies like these, and never return these exact companies:",
+      ...learning.passed.map(exampleLine)
+    );
+  }
+  return lines;
+}
+
 export function buildAgentRunSpec(
   searchType: SearchType,
   mode: Mode,
   sectorKey: string,
   filters: SearchFilters = {},
-  pass: SearchPass = 1
+  pass: SearchPass = 1,
+  learning?: Learning
 ): AgentRunSpec {
   const base = BASE_SECTORS[sectorKey];
   if (!base) throw new Error(`Unknown sector: ${sectorKey}`);
@@ -315,6 +353,7 @@ export function buildAgentRunSpec(
       criteriaBlock(base.criteria),
       ...typeBlock,
       ...financialBlock,
+      ...learningBlock(learning),
       ...passStrategyBlock("for_sale", pass),
       "",
       "Return each distinct business only once. For each, include the direct link to the for-sale listing itself (not just the company's own website) whenever one exists.",
@@ -366,6 +405,7 @@ export function buildAgentRunSpec(
     criteriaBlock(base.criteria),
     ...typeBlock,
     ...financialBlock,
+    ...learningBlock(learning),
     ...passStrategyBlock("proprietary", pass),
     "",
     "These are proprietary acquisition targets, not businesses currently marketed for sale — do not limit results to for-sale listings. Return each distinct company only once.",

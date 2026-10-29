@@ -21,6 +21,7 @@ const COLUMNS: { header: string; key: string; width?: number }[] = [
   { header: "Date Found", key: "date_found" },
   { header: "Contact", key: "contact" },
   { header: "Already PE-owned?", key: "pe_owned" },
+  { header: "Review", key: "review" },
 ];
 
 const MODE_LABEL: Record<string, string> = {
@@ -38,7 +39,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const rows = await queryCompanies(type, start, end);
+    // Passed rows are never exported.
+    const rows = await queryCompanies(type, start, end, { includePassed: false });
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet(type === "platform" ? "Platform Search Results" : "Add-On Search Results");
@@ -62,6 +64,7 @@ export async function GET(req: NextRequest) {
         date_found: new Date(row.date_found).toLocaleString(),
         contact: row.contact ?? "",
         pe_owned: row.mode === "proprietary" ? row.pe_owned ?? "" : "",
+        review: row.status === "kept" ? "Kept" : "",
       });
     }
 
