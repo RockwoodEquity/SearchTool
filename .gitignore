@@ -49,3 +49,6 @@ next-env.d.ts
 
 # internal handoff document (names accounts and projects; repo is public)
 handoff-guide.pdf
+
+# local server logs
+*.log
