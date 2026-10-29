@@ -409,11 +409,17 @@ export default function Home() {
   });
 
   const isMaster = view === "master";
+  const [sheet, setSheet] = useState<{ url: string; embedUrl: string } | null>(null);
+  const [showSheet, setShowSheet] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => setMe(d.user ?? null))
+      .catch(() => {});
+    apiFetch("/api/sheet-link")
+      .then((r) => r.json())
+      .then((d) => setSheet(d.url ? { url: d.url, embedUrl: d.embedUrl } : null))
       .catch(() => {});
   }, []);
 
@@ -677,6 +683,22 @@ export default function Home() {
             Everything either of you has sourced, combined, with its review status. This view is read-only: decisions and
             Reset happen in your own tabs, on companies your searches found.
           </p>
+          {sheet && (
+            <div className={styles.sheetBar}>
+              <span>
+                A live Google Sheet copy of this list, one tab per week. You can type in its Notes column.
+              </span>
+              <a className={styles.sheetButton} href={sheet.url} target="_blank" rel="noopener noreferrer">
+                Open Google Sheet
+              </a>
+              <button className={styles.sheetButtonPlain} onClick={() => setShowSheet((v) => !v)}>
+                {showSheet ? "Hide sheet here" : "Show sheet here"}
+              </button>
+            </div>
+          )}
+          {sheet && showSheet && (
+            <iframe className={styles.sheetFrame} src={sheet.embedUrl} title="Master Database Google Sheet" />
+          )}
           <div className={styles.masterSwitch}>
             {TABS.map((t) => (
               <button
