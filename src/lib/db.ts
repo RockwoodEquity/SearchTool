@@ -727,6 +727,8 @@ export async function deleteCriteriaRecord(key: string): Promise<void> {
 // ---- Google Sheet mirror ----
 
 export interface SheetRow {
+  /** Stable company id, so notes typed in the sheet stay attached to the right company. */
+  id: number;
   type: "Add-On" | "Platform";
   mode: "For-Sale Listing" | "Proprietary Target";
   category: string;
@@ -753,7 +755,7 @@ export interface SheetRow {
 export async function listSheetRows(timeZone: string): Promise<SheetRow[]> {
   await ensureSchema();
   const { rows } = await getPool().query(
-    `SELECT c.search_type, c.mode, c.category, c.company, c.website, c.link_to_listing, c.location, c.employees,
+    `SELECT c.id, c.search_type, c.mode, c.category, c.company, c.website, c.link_to_listing, c.location, c.employees,
             c.revenue_or_price, c.search_filters, c.why_fits, c.broker_source, c.listing_date::text AS listing_date,
             c.contact, c.pe_owned, c.status, u.email AS sourced_by,
             (c.date_found AT TIME ZONE $1)::date::text AS date_sourced,
@@ -763,6 +765,7 @@ export async function listSheetRows(timeZone: string): Promise<SheetRow[]> {
     [timeZone]
   );
   return rows.map((r) => ({
+    id: r.id,
     type: r.search_type === "platform" ? "Platform" : "Add-On",
     mode: r.mode === "for_sale" ? "For-Sale Listing" : "Proprietary Target",
     category: r.category,

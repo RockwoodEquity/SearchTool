@@ -8,13 +8,15 @@
  * "Week of M/D/YYYY" (the Monday). A company goes on the tab of the week it was sourced. Each tab is
  * sorted by Add-On / Platform, then category, with the Website and Source cells clickable.
  *
- * The tabs are a read-only COPY: they are overwritten on every change. Decisions (keep / pass) are made in
- * the app. To work with the data, copy a tab into a new tab or file.
+ * The app's columns are a COPY and are overwritten when that week's data changes (editing them shows a
+ * warning). The "Notes (editable)" column is yours: type anything there. Notes stay with their company when
+ * the tab is rewritten, re-sorted or filtered. Keep and pass decisions are made in the app.
  */
 
 var DEFAULT_FEED_URL = 'https://rockwood-search-tool.vercel.app/api/sheet-feed';
 var SYNC_EVERY_MINUTES = 5;
 var INFO_TAB = 'Sync info';
+var NOTES_HEADER = 'Notes (editable)';
 
 var COLUMNS = [
   { header: 'Type', key: 'type', width: 80 },
@@ -34,7 +36,9 @@ var COLUMNS = [
   { header: 'Listing Date', key: 'listing_date', width: 100, date: true },
   { header: 'Date Sourced', key: 'date_sourced', width: 100, date: true },
   { header: 'Contact', key: 'contact', width: 170 },
-  { header: 'Already PE-owned?', key: 'pe_owned', width: 130 }
+  { header: 'Already PE-owned?', key: 'pe_owned', width: 130 },
+  { header: NOTES_HEADER, key: '__notes', width: 320, wrap: true, editable: true },
+  { header: 'ID', key: 'id', width: 50, hidden: true }
 ];
 
 var TYPE_ORDER = { 'Add-On': 0, 'Platform': 1 };
@@ -230,10 +234,29 @@ function richLink(url) {
   return builder.setText(linkLabel(url)).setLinkUrl(url).build();
 }
 
+/** Notes typed in the sheet, by company id, read before a tab is rewritten. */
+function readNotes(sheet) {
+  var notes = {};
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return notes;
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var noteCol = values[0].indexOf(NOTES_HEADER);
+  var idCol = values[0].indexOf('ID');
+  if (noteCol < 0 || idCol < 0) return notes;
+  for (var i = 1; i < values.length; i++) {
+    var note = values[i][noteCol];
+    if (note !== '' && values[i][idCol] !== '') notes[String(values[i][idCol])] = note;
+  }
+  return notes;
+}
+
 function writeWeek(ss, title, rows) {
   var sheet = ss.getSheetByName(title) || ss.insertSheet(title);
+  var notes = readNotes(sheet);
   var oldFilter = sheet.getFilter();
   if (oldFilter) oldFilter.remove();
+  sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function (p) { p.remove(); });
   sheet.clear();
 
   var cols = COLUMNS.length;
@@ -249,6 +272,7 @@ function writeWeek(ss, title, rows) {
       return COLUMNS.map(function (c) {
         if (c.link) return row[c.key] ? linkLabel(row[c.key]) : '';
         if (c.date) return toDate(row[c.key]);
+        if (c.key === '__notes') return notes[String(row.id)] || '';
         return row[c.key] == null ? '' : row[c.key];
       });
     })
@@ -260,6 +284,7 @@ function writeWeek(ss, title, rows) {
     if (c.date) column.setNumberFormat('m/d/yyyy');
     if (c.wrap) column.setWrap(true);
     sheet.setColumnWidth(i + 1, c.width);
+    if (c.hidden) sheet.hideColumns(i + 1);
   });
   body.setVerticalAlignment('top');
 
@@ -275,6 +300,13 @@ function writeWeek(ss, title, rows) {
   );
 
   sheet.getRange(1, 1, rows.length + 1, cols).createFilter();
+
+  // Everything except the Notes column is app data: warn before anyone types over it.
+  var notesIndex = COLUMNS.map(function (c) { return c.key; }).indexOf('__notes');
+  var guarded = [sheet.getRange(1, 1, rows.length + 1, notesIndex), sheet.getRange(1, notesIndex + 2, rows.length + 1, cols - notesIndex - 1)];
+  guarded.forEach(function (range) {
+    range.protect().setWarningOnly(true).setDescription('Copied from Rockwood Search. It is overwritten when this week changes. Use the Notes column for your own comments.');
+  });
   return sheet;
 }
 
@@ -290,8 +322,8 @@ function writeInfo(ss, statusLine, counts) {
   }
   lines.push(
     ['', ''],
-    ['This workbook is a read-only copy. It is overwritten every ' + SYNC_EVERY_MINUTES + ' minutes when something changes.', ''],
-    ['Keep and pass decisions are made in the app. Copy a tab elsewhere if you want to work on the data.', '']
+    ['The columns from the app are a copy: they are overwritten (checked every ' + SYNC_EVERY_MINUTES + ' minutes) when that week changes, so do not edit them.', ''],
+    ['The Notes (editable) column is yours. Notes stay with their company. Keep and pass decisions are made in the app.', '']
   );
   sheet.clear();
   sheet.getRange(1, 1, lines.length, 2).setValues(lines);
