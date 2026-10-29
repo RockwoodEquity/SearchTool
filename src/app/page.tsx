@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { apiFetch, type Me } from "@/lib/client";
 import { PASS_REASONS, REASON_BY_CODE, type ReviewAction, type ReviewStatus } from "@/lib/feedback";
 import {
+  NARROW_GEOGRAPHY_SECTORS,
   SEARCH_PASSES,
   sectorLabel,
   sectorsFor,
@@ -19,7 +20,12 @@ type CategoryState = "idle" | "creating" | "running" | "collecting" | "done" | "
 interface CategoryStatus {
   state: CategoryState;
   error?: string;
+  /** New companies this run added after de-duplication; set when the run finishes. */
+  found?: number;
 }
+
+// A finished run that added fewer new companies than this gets a "search again" prompt.
+const MIN_NEW_RESULTS = 5;
 
 interface CompanyRow {
   id: number;
@@ -46,16 +52,21 @@ interface CompanyRow {
   owner_name: string | null;
 }
 
+type Geography = "both" | "us" | "canada";
+
 interface FilterInputs {
   minRevenueM: string;
   maxRevenueM: string;
   minEbitdaM: string;
   maxEbitdaM: string;
+  geography: Geography;
 }
 
-const EMPTY_FILTERS: FilterInputs = { minRevenueM: "", maxRevenueM: "", minEbitdaM: "", maxEbitdaM: "" };
+type NumericFilterKey = Exclude<keyof FilterInputs, "geography">;
 
-const FILTER_FIELDS: { key: keyof FilterInputs; label: string }[] = [
+const EMPTY_FILTERS: FilterInputs = { minRevenueM: "", maxRevenueM: "", minEbitdaM: "", maxEbitdaM: "", geography: "both" };
+
+const FILTER_FIELDS: { key: NumericFilterKey; label: string }[] = [
   { key: "minRevenueM", label: "Min Revenue ($M)" },
   { key: "maxRevenueM", label: "Max Revenue ($M)" },
   { key: "minEbitdaM", label: "Min EBITDA ($M)" },
@@ -63,7 +74,7 @@ const FILTER_FIELDS: { key: keyof FilterInputs; label: string }[] = [
 ];
 
 // Shown only as placeholder hints on the platform tab; nothing is applied unless typed in.
-const PLATFORM_HINTS: Record<keyof FilterInputs, string> = {
+const PLATFORM_HINTS: Record<NumericFilterKey, string> = {
   minRevenueM: "e.g. 10",
   maxRevenueM: "e.g. 75",
   minEbitdaM: "e.g. 2",
@@ -515,7 +526,7 @@ export default function Home() {
     }));
 
     // One full create -> wait -> save cycle for a single pass of a single focus area.
-    const runPass = async (sectorKey: string, pass: SearchPass) => {
+    const runPass = async (sectorKey: string, pass: SearchPass): Promise<number> => {
       const createRes = await apiFetch("/api/agent/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -534,12 +545,14 @@ export default function Home() {
       });
       if (!collectRes.ok) throw new Error((await collectRes.json().catch(() => ({}))).error ?? "Collect failed");
       await fetchRows(searchType, "mine");
+      return ((await collectRes.json().catch(() => ({}))) as { inserted?: number }).inserted ?? 0;
     };
 
     await Promise.all(
       sectorKeys.map(async (sectorKey) => {
         const results = await Promise.allSettled(SEARCH_PASSES.map((pass) => runPass(sectorKey, pass)));
         const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        const found = results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value : 0), 0);
         const message = (r: PromiseRejectedResult) => (r.reason instanceof Error ? r.reason.message : "Unknown error");
 
         if (failures.length === results.length) {
@@ -547,7 +560,10 @@ export default function Home() {
         } else {
           updateStatus(searchType, mode, sectorKey, {
             state: "done",
-            error: failures.length > 0 ? `1 of ${results.length} passes failed: ${message(failures[0])}` : undefined,
+            found,
+            error: failures.length > 0
+                ? `${failures.length} of ${results.length} passes failed: ${message(failures[0])}`
+                : undefined,
           });
         }
       })
@@ -603,6 +619,11 @@ export default function Home() {
   const keptTotal = rows.filter((r) => r.status === "kept").length;
   const sectors = sectorsFor(tab);
   const busy = running !== null;
+  const narrowSectors =
+    filterInputs[tab].geography === "canada"
+      ? sectors.filter((k) => k in NARROW_GEOGRAPHY_SECTORS).map((k) => sectorLabel(k))
+      : [];
+  const narrowNames = [...new Set(sectors.filter((k) => k in NARROW_GEOGRAPHY_SECTORS).map((k) => NARROW_GEOGRAPHY_SECTORS[k]))].join(" / ");
 
   return (
     <div className={styles.page}>
@@ -610,6 +631,9 @@ export default function Home() {
         <h1>Rockwood Search</h1>
         <div className={styles.userBar}>
           {me && <span className={styles.userName}>{me.name}</span>}
+          <Link href="/criteria" className={styles.memoryLink}>
+            Criteria
+          </Link>
           <Link href="/memory" className={styles.memoryLink}>
             Rules &amp; Memory
           </Link>
@@ -692,6 +716,34 @@ export default function Home() {
             />
           </label>
         ))}
+        <fieldset className={styles.geography} disabled={busy}>
+          <legend>Geography</legend>
+          {(["us", "canada"] as const).map((g) => {
+            const current = filterInputs[tab].geography;
+            const checked = current === "both" || current === g;
+            return (
+              <label key={g}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => {
+                    // At least one country stays ticked; both ticked means no geography restriction.
+                    const other = g === "us" ? "canada" : "us";
+                    const next: Geography = current === "both" ? other : current === g ? current : "both";
+                    setFilterInputs((prev) => ({ ...prev, [tab]: { ...prev[tab], geography: next } }));
+                  }}
+                />
+                {g === "us" ? "US" : "Canada"}
+              </label>
+            );
+          })}
+        </fieldset>
+        {narrowSectors.length > 0 && (
+          <span className={styles.filterHint}>
+            Heads up: {narrowSectors.join(" and ")} already limited to {narrowNames}, so a Canada-only search will find
+            nothing there.
+          </span>
+        )}
         {tab === "platform" && (
           <span className={styles.filterHint}>
             Rockwood&rsquo;s stated target range is $10&ndash;75M revenue and $2&ndash;7M EBITDA. Nothing is applied unless you enter it here.
@@ -714,10 +766,21 @@ export default function Home() {
                     <span className={styles.statusDetail}>
                       {s.state === "idle" && "idle"}
                       {s.state === "creating" && "creating…"}
-                      {s.state === "running" && "researching (2 passes)…"}
-                      {s.state === "done" && (s.error ? `done, but ${s.error}` : "done")}
+                      {s.state === "running" && `researching (${SEARCH_PASSES.length} searches at once)…`}
+                      {s.state === "done" &&
+                        `${s.error ? `done, but ${s.error}` : "done"} · ${s.found ?? 0} new`}
                       {s.state === "error" && `error: ${s.error}`}
                     </span>
+                    {s.state === "done" && (s.found ?? 0) < MIN_NEW_RESULTS && (
+                      <button
+                        className={styles.searchAgainButton}
+                        disabled={busy}
+                        onClick={() => runOneSector(mode, key)}
+                        title="This search found few new companies. Run it again to dig deeper: already-found companies are skipped, so it looks further."
+                      >
+                        Only {s.found ?? 0} new. Search again
+                      </button>
+                    )}
                     <button
                       className={styles.runOneButton}
                       disabled={busy}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getExaClient } from "@/lib/exa";
 import { requireUser } from "@/lib/auth";
-import { getExclusions, getLearning } from "@/lib/db";
+import { getCriteriaOverrides, getExclusions, getLearning } from "@/lib/db";
 import type { Exclusion, Learning } from "@/lib/feedback";
 import {
   buildAgentRunSpec,
@@ -10,6 +10,7 @@ import {
   sanitizeFilters,
   sectorLabel,
   sectorsFor,
+  type CriteriaOverrides,
   type Mode,
 } from "@/lib/sectors";
 
@@ -61,13 +62,24 @@ export async function POST(req: NextRequest) {
       console.error("Could not load review memory; searching without it:", err);
     }
 
+    // The criteria the team has edited on the Criteria page. Unlike review memory this must not be
+    // skipped on error: searching with stale text would silently ignore someone's edits.
+    let overrides: CriteriaOverrides;
+    try {
+      overrides = await getCriteriaOverrides();
+    } catch (err) {
+      console.error("Could not load saved criteria:", err);
+      return NextResponse.json({ error: "Could not load the saved search criteria. Try again." }, { status: 500 });
+    }
+
     const { query, outputSchema } = buildAgentRunSpec(
       searchType,
       mode,
       sectorKey,
       sanitizeFilters(filters),
       pass,
-      learning
+      learning,
+      overrides
     );
 
     const run = await exa.agent.runs.create({

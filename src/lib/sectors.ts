@@ -6,6 +6,10 @@ interface BaseSector {
   label: string;
   description: string;
   criteria: string[];
+  /** Words and phrases that identify the target companies. */
+  keywords?: string[];
+  /** Terms for businesses that must not be returned. */
+  exclusions?: string[];
 }
 
 const BASE_SECTORS: Record<string, BaseSector> = {
@@ -68,8 +72,20 @@ const BASE_SECTORS: Record<string, BaseSector> = {
     description:
       "Aftermarket products and services companies in the US and Canada that supply and service the crushing, screening and conveying equipment used at aggregate quarries, sand and gravel pits, mines, and recycling and bulk-material-handling plants. " +
       "Products: wear parts and consumables for crushing, screening and conveying equipment, including screen media (woven wire cloth, polyurethane, rubber and plate/perforated), crusher wear parts and liners (jaw plates, cone and gyratory mantles and concaves, impact crusher blow bars), abrasion-resistant liners and wear products (rubber and ceramic liners, wear plate), and conveyor belting and components (belts, idlers, pulleys, belt cleaners, skirting). Also aftermarket parts distribution for aggregates, mining, sand and gravel, and recycling customers. " +
-      "Services: rebuild, repair and field service of crushers, screens and conveyors; conveyor belt installation, splicing and repair (including vulcanizing); hardfacing and wear-resistant welding; and plant maintenance services for quarries, pits and mines. " +
-      "Vocabulary that identifies these companies: aggregate, quarry, sand and gravel, mining supply, bulk material handling, wire cloth, screen media, crusher parts, wear parts, conveyor belting, industrial rubber products.",
+      "Services: rebuild, repair and field service of crushers, screens and conveyors; conveyor belt installation, splicing and repair (including vulcanizing); hardfacing and wear-resistant welding; and plant maintenance services for quarries, pits and mines.",
+    keywords: [
+      "aggregate",
+      "quarry",
+      "sand and gravel",
+      "mining supply",
+      "bulk material handling",
+      "wire cloth",
+      "screen media",
+      "crusher parts",
+      "wear parts",
+      "conveyor belting",
+      "industrial rubber products",
+    ],
     criteria: [
       "Makes, distributes, installs or services at least one of: screen media (wire cloth, polyurethane, rubber, plate), crusher wear parts and liners, abrasion-resistant liners and wear products, conveyor belting and components, or aftermarket parts for crushing, screening and conveying equipment",
       "Or provides at least one of these services: crusher, screen or conveyor rebuild, repair or field service; conveyor belt installation, splicing or repair; hardfacing or wear-resistant welding; or plant maintenance for quarries, pits and mines",
@@ -159,13 +175,53 @@ Object.assign(BASE_SECTORS, {
   },
 });
 
-const PLATFORM_EXCLUSIONS: string[] = [
-  "",
+/** Shared by every platform focus area; editable on the Criteria page. */
+const DEFAULT_PLATFORM_EXCLUSIONS = [
   "STRICT EXCLUSIONS for this search:",
   "- Exclude contractors: companies whose revenue comes mainly from bid-based, project-by-project construction, installation or trade contracting work (general contractors, subcontractors, and similar).",
   "- Exclude businesses with heavy commodity risk: companies whose main output is a raw material or commodity, or whose margins swing with commodity input prices (for example metals, resin, lumber, aggregates, fuel, oil and gas, agricultural commodities).",
   "Prefer differentiated products or services, repeat or recurring revenue, and diversified customers.",
-];
+].join("\n");
+
+/** The text of the shared platform exclusions as shipped. */
+export function defaultPlatformExclusions(): string {
+  return DEFAULT_PLATFORM_EXCLUSIONS;
+}
+
+/** The criteria of one focus area, as the search uses them. */
+export interface CriteriaSpec {
+  description: string;
+  criteria: string[];
+  keywords: string[];
+  exclusions: string[];
+}
+
+/** Edits saved on the Criteria page. Anything not listed here uses the shipped text. */
+export interface CriteriaOverrides {
+  sectors: Record<string, CriteriaSpec>;
+  platformExclusions?: string;
+}
+
+/** Key under which the shared platform exclusions are stored, next to the per-focus-area keys. */
+export const PLATFORM_EXCLUSIONS_KEY = "__platform_exclusions";
+
+/** The criteria of a focus area as shipped, or null for an unknown key. */
+export function defaultCriteria(sectorKey: string): CriteriaSpec | null {
+  const base = BASE_SECTORS[sectorKey];
+  if (!base) return null;
+  return {
+    description: base.description,
+    criteria: [...base.criteria],
+    keywords: [...(base.keywords ?? [])],
+    exclusions: [...(base.exclusions ?? [])],
+  };
+}
+
+/** Focus areas whose shipped criteria already narrow the geography below "US or Canada". */
+export const NARROW_GEOGRAPHY_SECTORS: Record<string, string> = {
+  b2b_services: "New York, New Jersey and Philadelphia",
+  specialty_medical: "the US",
+};
 
 export const SECTOR_ORDER = [
   "environmental_services",
@@ -216,6 +272,8 @@ export interface SearchFilters {
   maxRevenueM?: number;
   minEbitdaM?: number;
   maxEbitdaM?: number;
+  /** Omitted means both the US and Canada. */
+  geography?: "us" | "canada";
 }
 
 function cleanBound(v: unknown): number | undefined {
@@ -230,7 +288,17 @@ export function sanitizeFilters(raw: unknown): SearchFilters {
     maxRevenueM: cleanBound(r.maxRevenueM),
     minEbitdaM: cleanBound(r.minEbitdaM),
     maxEbitdaM: cleanBound(r.maxEbitdaM),
+    geography: r.geography === "us" || r.geography === "canada" ? r.geography : undefined,
   };
+}
+
+function geographyBlock(filters: SearchFilters): string[] {
+  if (!filters.geography) return [];
+  const [want, avoid] = filters.geography === "us" ? ["the United States", "Canada"] : ["Canada", "the United States"];
+  return [
+    "",
+    `GEOGRAPHY REQUIREMENT — strict: the company must be headquartered in ${want}. Exclude any company headquartered in ${avoid}. This overrides any other mention of geography above.`,
+  ];
 }
 
 function rangeText(label: string, min?: number, max?: number): string | null {
@@ -245,6 +313,7 @@ export function formatFilterLabel(filters: SearchFilters): string | null {
   const parts = [
     rangeText("Revenue", filters.minRevenueM, filters.maxRevenueM),
     rangeText("EBITDA", filters.minEbitdaM, filters.maxEbitdaM),
+    filters.geography ? (filters.geography === "us" ? "US only" : "Canada only") : null,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join("; ") : null;
 }
@@ -271,17 +340,29 @@ function financialRequirementBlock(filters: SearchFilters): string[] {
   return lines;
 }
 
-/** Every focus area is searched twice per click, with different strategies, to widen coverage. */
-export const SEARCH_PASSES = [1, 2] as const;
+/** Every focus area is searched three times at once per click, with different strategies, to widen coverage. */
+export const SEARCH_PASSES = [1, 2, 3] as const;
 export type SearchPass = (typeof SEARCH_PASSES)[number];
 
 export function isSearchPass(v: unknown): v is SearchPass {
-  return v === 1 || v === 2;
+  return v === 1 || v === 2 || v === 3;
 }
 
 function passStrategyBlock(mode: Mode, pass: SearchPass): string[] {
   if (pass === 1) return [];
-  if (mode === "for_sale") {
+  if (pass === 3) {
+    if (mode === "for_sale") {
+      return [
+        "",
+        "SEARCH STRATEGY FOR THIS PASS: two other passes are covering the large marketplaces and the niche brokers at the same time, so do not repeat that. Instead search by wording and by place. Use the different names an owner or broker might give this kind of business in a listing title (for example established, turnkey, route-based, owner retiring, succession, absentee-owner), search region by region (state by state and province by province) rather than nationally, and check category pages and smaller classified sites. Open the individual listing pages to confirm the details, and prefer listings that are current (still active, not expired or sold).",
+      ];
+    }
+    return [
+      "",
+      "SEARCH STRATEGY FOR THIS PASS: two other passes are covering the best-known companies and the trade-association and directory listings at the same time, so do not repeat that. Instead look for companies that describe themselves in different words: synonyms, narrower sub-niches and adjacent services within this focus area. Search city by city and metro by metro across the allowed geography for local operators, and use customer and supplier ecosystems such as vendor and approved-supplier lists, state or provincial licensing and registration databases, local business listings, and regional awards and fastest-growing lists. Open each candidate's own website to confirm what it does, where it is based, and who owns it before including it.",
+    ];
+  }
+  if (pass === 2 && mode === "for_sale") {
     return [
       "",
       "SEARCH STRATEGY FOR THIS PASS: a first pass has already covered the largest, best-known marketplaces. Do not stop at the first page of results. Look specifically in places that pass would have missed: niche and industry-specific business brokers, M&A advisor and investment-banker \"current opportunities\" pages, regional broker sites, trade-association and industry-publication classifieds, and smaller marketplaces. Open the individual listing pages and read them to confirm the details. Prefer listings that are current (still active, not expired or sold).",
@@ -334,23 +415,38 @@ export function buildAgentRunSpec(
   sectorKey: string,
   filters: SearchFilters = {},
   pass: SearchPass = 1,
-  learning?: Learning
+  learning?: Learning,
+  overrides?: CriteriaOverrides
 ): AgentRunSpec {
-  const base = BASE_SECTORS[sectorKey];
-  if (!base) throw new Error(`Unknown sector: ${sectorKey}`);
+  const shipped = defaultCriteria(sectorKey);
+  if (!shipped) throw new Error(`Unknown sector: ${sectorKey}`);
   if (!sectorsFor(searchType).includes(sectorKey)) {
     throw new Error(`Sector ${sectorKey} does not belong to ${searchType} search`);
   }
-  const typeBlock = searchType === "platform" ? PLATFORM_EXCLUSIONS : [];
-  const financialBlock = financialRequirementBlock(filters);
+  const base = overrides?.sectors[sectorKey] ?? shipped;
+  const exclusionText = (overrides?.platformExclusions ?? DEFAULT_PLATFORM_EXCLUSIONS).trim();
+  const typeBlock = searchType === "platform" && exclusionText ? ["", ...exclusionText.split("\n")] : [];
+  const keywordText =
+    base.keywords.length > 0 ? ` Vocabulary that identifies these companies: ${base.keywords.join(", ")}.` : "";
+  const description = base.description + keywordText;
+  const exclusionTermsBlock =
+    base.exclusions.length > 0
+      ? [
+          "",
+          "EXCLUSION TERMS — do not return any company that is, or whose business matches, any of these:",
+          ...base.exclusions.map((e) => `- ${e}`),
+        ]
+      : [];
+  const financialBlock = [...financialRequirementBlock(filters), ...geographyBlock(filters)];
 
   if (mode === "for_sale") {
     const query = [
       `Find up to ${MAX_ITEMS} real businesses currently for sale that match this description:`,
-      base.description,
+      description,
       "",
       "A result only counts if it is actively marketed for sale right now — listed on a business-for-sale marketplace (e.g. BizBuySell, Axial, a broker's site) or similar — not merely a company website with no for-sale listing. Also require:",
       criteriaBlock(base.criteria),
+      ...exclusionTermsBlock,
       ...typeBlock,
       ...financialBlock,
       ...learningBlock(learning),
@@ -399,10 +495,11 @@ export function buildAgentRunSpec(
 
   const query = [
     `Find up to ${MAX_ITEMS} real companies that match this description:`,
-    base.description,
+    description,
     "",
     "Require:",
     criteriaBlock(base.criteria),
+    ...exclusionTermsBlock,
     ...typeBlock,
     ...financialBlock,
     ...learningBlock(learning),

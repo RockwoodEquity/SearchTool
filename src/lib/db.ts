@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import type { Mode, SearchType } from "./sectors";
+import { PLATFORM_EXCLUSIONS_KEY, type CriteriaOverrides, type CriteriaSpec, type Mode, type SearchType } from "./sectors";
 import {
   FIRM_REASONS,
   REASON_BY_CODE,
@@ -154,8 +154,16 @@ export async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await q(`
+    CREATE TABLE IF NOT EXISTS criteria_settings (
+      key TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   // Keep every table closed to Supabase's public web API; the app connects with the database role directly.
-  for (const table of ["companies", "learning_rules", "users", "password_resets", "login_attempts"]) {
+  for (const table of ["companies", "learning_rules", "users", "password_resets", "login_attempts", "criteria_settings"]) {
     await q(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
   }
   initialized = true;
@@ -631,4 +639,87 @@ export async function consumeResetToken(token: string): Promise<boolean> {
     [sha256(token)]
   );
   return (res.rowCount ?? 0) > 0;
+}
+
+// ---- Editable search criteria (shared by everyone, saved from the Criteria page) ----
+
+export interface CriteriaRecord {
+  key: string;
+  data: unknown;
+  updated_by: string;
+  updated_at: string;
+}
+
+export async function listCriteriaRecords(): Promise<CriteriaRecord[]> {
+  await ensureSchema();
+  const { rows } = await getPool().query<{ key: string; data: unknown; updated_by: string; updated_at: Date }>(
+    `SELECT key, data, updated_by, updated_at FROM criteria_settings`
+  );
+  return rows.map((r) => ({ ...r, updated_at: r.updated_at.toISOString() }));
+}
+
+function isCriteriaSpec(v: unknown): v is CriteriaSpec {
+  const d = v as CriteriaSpec | null;
+  const strings = (a: unknown) => Array.isArray(a) && a.every((s) => typeof s === "string");
+  return !!d && typeof d.description === "string" && strings(d.criteria) && strings(d.keywords) && strings(d.exclusions);
+}
+
+/** Every saved edit, in the shape the search builder takes. Focus areas without an edit are absent. */
+export async function getCriteriaOverrides(): Promise<CriteriaOverrides> {
+  const overrides: CriteriaOverrides = { sectors: {} };
+  for (const rec of await listCriteriaRecords()) {
+    if (rec.key === PLATFORM_EXCLUSIONS_KEY) {
+      const text = (rec.data as { text?: unknown } | null)?.text;
+      if (typeof text === "string") overrides.platformExclusions = text;
+    } else if (isCriteriaSpec(rec.data)) {
+      overrides.sectors[rec.key] = rec.data;
+    }
+  }
+  return overrides;
+}
+
+/**
+ * Saves one edit. `expectedUpdatedAt` is the version the editor was looking at (null if it had never
+ * been edited); if someone else saved in between, nothing is written and `conflict` is returned.
+ */
+export async function saveCriteriaRecord(
+  key: string,
+  data: CriteriaSpec | { text: string },
+  actorName: string,
+  expectedUpdatedAt: string | null
+): Promise<{ ok: true; updated_at: string } | { ok: false; reason: "conflict" }> {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query<{ updated_at: Date }>(
+      `SELECT updated_at FROM criteria_settings WHERE key = $1 FOR UPDATE`,
+      [key]
+    );
+    const current = existing.rows[0]?.updated_at.toISOString() ?? null;
+    if (current !== expectedUpdatedAt) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "conflict" };
+    }
+    const saved = await client.query<{ updated_at: Date }>(
+      `INSERT INTO criteria_settings (key, data, updated_by, updated_at)
+       VALUES ($1, $2::jsonb, $3, date_trunc('milliseconds', NOW()))
+       ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at
+       RETURNING updated_at`,
+      [key, JSON.stringify(data), actorName]
+    );
+    await client.query("COMMIT");
+    return { ok: true, updated_at: saved.rows[0].updated_at.toISOString() };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Puts a focus area (or the shared platform exclusions) back to the shipped text. */
+export async function deleteCriteriaRecord(key: string): Promise<void> {
+  await ensureSchema();
+  await getPool().query(`DELETE FROM criteria_settings WHERE key = $1`, [key]);
 }
