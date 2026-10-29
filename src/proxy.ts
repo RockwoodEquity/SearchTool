@@ -10,6 +10,7 @@ const PUBLIC_PATHS = [
   "/api/auth/logout",
   "/api/auth/forgot",
   "/api/auth/reset",
+  "/api/sheet-feed", // checks its own secret key; see the route
 ];
 
 // First line of defense: a request without a validly signed session cookie never reaches the app.

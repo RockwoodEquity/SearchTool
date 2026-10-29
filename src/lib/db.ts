@@ -723,3 +723,64 @@ export async function deleteCriteriaRecord(key: string): Promise<void> {
   await ensureSchema();
   await getPool().query(`DELETE FROM criteria_settings WHERE key = $1`, [key]);
 }
+
+// ---- Google Sheet mirror ----
+
+export interface SheetRow {
+  type: "Add-On" | "Platform";
+  mode: "For-Sale Listing" | "Proprietary Target";
+  category: string;
+  company: string;
+  sourced_by: string | null;
+  review: "New" | "Kept" | "Passed";
+  website: string | null;
+  source_url: string | null;
+  location: string | null;
+  employees: string | null;
+  revenue_or_price: string | null;
+  search_filters: string | null;
+  why_fits: string | null;
+  broker_source: string | null;
+  listing_date: string | null;
+  date_sourced: string;
+  contact: string | null;
+  pe_owned: string | null;
+  /** Monday of the week the company was sourced, as YYYY-MM-DD in the given time zone. */
+  week_start: string;
+}
+
+/** Every company from every account, for the Google Sheet. Weeks start on Monday in `timeZone`. */
+export async function listSheetRows(timeZone: string): Promise<SheetRow[]> {
+  await ensureSchema();
+  const { rows } = await getPool().query(
+    `SELECT c.search_type, c.mode, c.category, c.company, c.website, c.link_to_listing, c.location, c.employees,
+            c.revenue_or_price, c.search_filters, c.why_fits, c.broker_source, c.listing_date::text AS listing_date,
+            c.contact, c.pe_owned, c.status, u.email AS sourced_by,
+            (c.date_found AT TIME ZONE $1)::date::text AS date_sourced,
+            date_trunc('week', c.date_found AT TIME ZONE $1)::date::text AS week_start
+       FROM companies c LEFT JOIN users u ON u.id = c.owner_id
+      ORDER BY c.date_found DESC`,
+    [timeZone]
+  );
+  return rows.map((r) => ({
+    type: r.search_type === "platform" ? "Platform" : "Add-On",
+    mode: r.mode === "for_sale" ? "For-Sale Listing" : "Proprietary Target",
+    category: r.category,
+    company: r.company,
+    sourced_by: r.sourced_by,
+    review: r.status === "kept" ? "Kept" : r.status === "passed" ? "Passed" : "New",
+    website: r.website,
+    source_url: r.link_to_listing,
+    location: r.location,
+    employees: r.employees,
+    revenue_or_price: r.revenue_or_price,
+    search_filters: r.search_filters,
+    why_fits: r.why_fits,
+    broker_source: r.broker_source,
+    listing_date: r.listing_date,
+    date_sourced: r.date_sourced,
+    contact: r.contact,
+    pe_owned: r.mode === "proprietary" ? r.pe_owned : null,
+    week_start: r.week_start,
+  }));
+}
