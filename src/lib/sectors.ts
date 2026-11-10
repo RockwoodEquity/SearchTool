@@ -173,6 +173,47 @@ Object.assign(BASE_SECTORS, {
       "Revenue is driven by regulatory or compliance requirements (OSHA/MSHA, DOT, EPA/Title V, or similar certification/testing mandates), not discretionary spend",
     ],
   },
+  platform_filtration: {
+    label: "Filtration Distributors & Manufacturers",
+    description:
+      "Companies that manufacture or distribute filters and filtration products, of any size. " +
+      "Manufacturers: air filters (HVAC, pleated and panel, bag, HEPA and cleanroom, paint-booth, dust-collector and fume-collection filters and cartridges), liquid filtration (water, hydraulic, lubricating oil, fuel and process-fluid filters, filter cartridges, bag filters and filter housings), heavy-duty and automotive replacement filters (oil, air, fuel, cabin), and filter media converted or cut into finished filters, including custom-sized and fabricated filters. " +
+      "Distributors: filter distributors that stock and sell filters to HVAC contractors, facility maintenance and building-service companies, industrial plants, restaurants, healthcare facilities and similar commercial and industrial customers, including custom sizing, scheduled filter-replacement and route-based programs.",
+    keywords: [
+      "filtration",
+      "air filter",
+      "HVAC filter",
+      "MERV",
+      "HEPA",
+      "pleated filter",
+      "cartridge filter",
+      "bag filter",
+      "filter media",
+      "filter housings",
+      "dust collector filters",
+      "hydraulic filter",
+      "oil filter",
+      "fuel filter",
+      "water filtration",
+      "replacement filters",
+      "filter distributor",
+    ],
+    exclusions: [
+      "Large multinational or publicly traded filtration companies (for example Donaldson, Parker Hannifin, Pall, Camfil, Mann+Hummel, Cummins Filtration)",
+      "HVAC, mechanical or plumbing contractors that install or service whole systems, and water-treatment service contractors",
+      "Online retailers or resellers that neither make nor stock filters themselves",
+      "Manufacturers of HVAC or other equipment where filters are only a minor product line",
+      "Producers of raw filter-media inputs (such as fiberglass, nonwoven or resin mills) that do not sell finished filters",
+    ],
+    criteria: [
+      "Manufactures or distributes filters or filtration products as the core of the business, not a side line",
+      "Revenue repeats because filters and cartridges are replaced (consumable or replacement revenue), rather than being mostly one-time equipment sales",
+      "Manufacturers of filtration equipment (housings, filter systems) count only when replacement filters or consumables are a meaningful share of their revenue",
+      "Any company size: do not exclude a company for being small or for being large",
+      PLATFORM_GEOGRAPHY,
+      PLATFORM_OWNERSHIP,
+    ],
+  },
 });
 
 /** Shared by every platform focus area; editable on the Criteria page. */
@@ -241,6 +282,7 @@ export const PLATFORM_SECTOR_ORDER = [
   "platform_healthcare",
   "specialty_medical",
   "field_services",
+  "platform_filtration",
 ] as const;
 
 export function isSearchType(v: unknown): v is SearchType {
